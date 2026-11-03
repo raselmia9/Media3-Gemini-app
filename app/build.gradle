@@ -1,0 +1,51 @@
+
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.raselahomed467.advancedmedia3player'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.raselahomed467.advancedmedia3player'
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    def media3_version = '1.11.1'
+
+    // AndroidX AppCompat
+    implementation 'androidx.appcompat:appcompat:1.7.1'
+
+    // Material Design
+    implementation 'com.google.android.material:material:1.13.0'
+
+    // Media3 ExoPlayer
+    implementation "androidx.media3:media3-exoplayer:$media3_version"
+
+    // MPEG-DASH (MPD)
+    implementation "androidx.media3:media3-exoplayer-dash:$media3_version"
+
+    // HLS (M3U8)
+    implementation "androidx.media3:media3-exoplayer-hls:$media3_version"
+
+    // Player UI
+    implementation "androidx.media3:media3-ui:$media3_version"
+
+    // Custom HTTP Headers / OkHttp
+    implementation "androidx.media3:media3-datasource-okhttp:$media3_version"
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // FFmpeg Audio Decoder
+    implementation "androidx.media3:media3-decoder-ffmpeg:$media3_version"
+}
