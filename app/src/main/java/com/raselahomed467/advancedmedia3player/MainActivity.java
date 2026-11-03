@@ -1,30 +1,32 @@
+
 package com.raselahomed467.advancedmedia3player;
 
 import android.app.AlertDialog;
 import android.app.PictureInPictureParams;
 import android.content.pm.ActivityInfo;
-import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Base64;
 import android.util.Rational;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
+import android.graphics.Rect;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
-import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.view.MotionEvent;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -62,6 +64,8 @@ import java.util.Locale;
 import java.util.Map;
 
 import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 @UnstableApi
 public class MainActivity extends AppCompatActivity {
@@ -71,55 +75,24 @@ public class MainActivity extends AppCompatActivity {
 
     private LinearLayout rootLayout;
     private TextView titleBar;
-    private ScrollView inputScroll;
+    private LinearLayout inputScroll;
+    private WebView eventWebView;
+    private Thread htmlLoadThread;
+    private FrameLayout lockOverlay;
+    private TextView unlockButton;
+    private TextView fullscreenButton;
+    private boolean controlsLocked = false;
+    private boolean wasFullscreenBeforePip = false;
 
     private FrameLayout playerContainer;
-
-    // Custom Controls Elements
-    private FrameLayout customControlsOverlay;
-    private ProgressBar bufferingProgress;
-    private TextView btnPlayPause;
-    private TextView timeCurrent;
-    private TextView timeDuration;
-    private SeekBar customSeekBar;
+    private LinearLayout leftControls;
+    private LinearLayout rightControls;
 
     private EditText urlInput;
     private TextView statusText;
 
     private boolean fullscreen = false;
     private int resizeMode = 0;
-    private boolean isControlsVisible = true;
-    private boolean isUserSeeking = false;
-
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable autoHideRunnable = this::hideControls;
-
-    // Progress bar updater
-    private final Runnable updateProgressRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (player != null && !isUserSeeking) {
-                long current = player.getCurrentPosition();
-                long duration = player.getDuration();
-
-                if (duration > 0) {
-                    customSeekBar.setMax((int) duration);
-                    customSeekBar.setProgress((int) current);
-                    timeDuration.setText(formatTime(duration));
-                } else {
-                    timeDuration.setText("LIVE");
-                }
-                timeCurrent.setText(formatTime(current));
-
-                if (player.isPlaying()) {
-                    btnPlayPause.setText("❚❚");
-                } else {
-                    btnPlayPause.setText("▶");
-                }
-            }
-            handler.postDelayed(this, 500);
-        }
-    };
 
     private final int BG_COLOR = Color.rgb(9, 13, 22);
     private final int BUTTON_COLOR = Color.rgb(35, 48, 67);
@@ -149,14 +122,14 @@ public class MainActivity extends AppCompatActivity {
         buildScreen();
         initializePlayer();
 
-        handler.post(updateProgressRunnable);
-
         getOnBackPressedDispatcher().addCallback(
                 this,
                 new OnBackPressedCallback(true) {
                     @Override
                     public void handleOnBackPressed() {
-                        if (fullscreen) {
+                        if (controlsLocked) {
+                            setControlsLocked(false);
+                        } else if (fullscreen) {
                             toggleFullscreen();
                         } else {
                             finish();
@@ -183,439 +156,181 @@ public class MainActivity extends AppCompatActivity {
         titleBar.setGravity(Gravity.CENTER_VERTICAL);
         titleBar.setPadding(dp(16), dp(12), dp(16), dp(12));
         titleBar.setTypeface(null, android.graphics.Typeface.BOLD);
+        rootLayout.addView(titleBar, new LinearLayout.LayoutParams(-1, dp(52)));
 
-        rootLayout.addView(
-                titleBar,
-                new LinearLayout.LayoutParams(-1, dp(52))
-        );
-
-        // Player Container
         playerContainer = new FrameLayout(this);
         playerContainer.setBackgroundColor(Color.BLACK);
-
         playerView = new PlayerView(this);
-        // Disable ExoPlayer's built-in default controller completely
-        playerView.setUseController(false);
-
-        playerView.setResizeMode(
-                AspectRatioFrameLayout.RESIZE_MODE_FIT
-        );
+        playerView.setUseController(true);
+        playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
+        playerView.setControllerShowTimeoutMs(3500);
+        playerView.setControllerHideOnTouch(true);
+        playerView.setShowNextButton(false);
+        playerView.setShowPreviousButton(false);
+        playerView.setShowSubtitleButton(false);
+        playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
         playerView.setBackgroundColor(Color.BLACK);
+        playerContainer.addView(playerView, new FrameLayout.LayoutParams(-1, -1));
 
-        playerContainer.addView(
-                playerView,
-                new FrameLayout.LayoutParams(-1, -1)
+        leftControls = new LinearLayout(this);
+        leftControls.setOrientation(LinearLayout.VERTICAL);
+        leftControls.setGravity(Gravity.CENTER);
+        // Audio and subtitle selection are grouped under the gear menu.
+
+        rightControls = new LinearLayout(this);
+        rightControls.setOrientation(LinearLayout.VERTICAL);
+        rightControls.setGravity(Gravity.CENTER);
+
+        addSideButton(rightControls, "⚙", "Settings", this::showPlayerSettings);
+
+        fullscreenButton = addSideButton(
+                rightControls, "⛶", "Enter fullscreen", this::toggleFullscreen
+        );
+        addSideButton(rightControls, "▣", "Picture in Picture", this::enterPictureInPicture);
+        addSideButton(rightControls, "🔒", "Lock controls", () -> setControlsLocked(true));
+
+        FrameLayout.LayoutParams rightParams = new FrameLayout.LayoutParams(
+                dp(48), -2, Gravity.CENTER_VERTICAL | Gravity.END
+        );
+        rightParams.rightMargin = dp(5);
+        playerContainer.addView(rightControls, rightParams);
+
+        lockOverlay = new FrameLayout(this);
+        lockOverlay.setBackgroundColor(Color.TRANSPARENT);
+        lockOverlay.setVisibility(View.GONE);
+        lockOverlay.setClickable(true);
+        lockOverlay.setOnTouchListener((v, event) -> true);
+        unlockButton = new TextView(this);
+        unlockButton.setText("🔓");
+        unlockButton.setTextColor(Color.WHITE);
+        unlockButton.setTextSize(22);
+        unlockButton.setGravity(Gravity.CENTER);
+        unlockButton.setContentDescription("Unlock player controls");
+        GradientDrawable unlockBg = new GradientDrawable();
+        unlockBg.setColor(Color.argb(210, 35, 48, 67));
+        unlockBg.setCornerRadius(dp(14));
+        unlockButton.setBackground(unlockBg);
+        FrameLayout.LayoutParams unlockParams = new FrameLayout.LayoutParams(
+                dp(52), dp(52), Gravity.CENTER_VERTICAL | Gravity.END
+        );
+        unlockParams.rightMargin = dp(8);
+        lockOverlay.addView(unlockButton, unlockParams);
+        unlockButton.setOnClickListener(v -> setControlsLocked(false));
+        playerContainer.addView(lockOverlay, new FrameLayout.LayoutParams(-1, -1));
+
+        playerView.setControllerVisibilityListener(
+                (PlayerView.ControllerVisibilityListener) visibility -> {
+                    if (!controlsLocked && !isInPipMode()) {
+                        int sideVisibility = visibility == View.VISIBLE ? View.VISIBLE : View.GONE;
+                        leftControls.setVisibility(sideVisibility);
+                        rightControls.setVisibility(sideVisibility);
+                    }
+                }
         );
 
-        // Buffering Indicator in center
-        bufferingProgress = new ProgressBar(this);
-        bufferingProgress.setIndeterminate(true);
-        bufferingProgress.setVisibility(View.GONE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            bufferingProgress.setIndeterminateTintList(
-                    ColorStateList.valueOf(Color.rgb(85, 194, 255))
-            );
-        }
+        rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.30f));
 
-        FrameLayout.LayoutParams bufferParams = new FrameLayout.LayoutParams(
-                dp(48), dp(48), Gravity.CENTER
-        );
-        playerContainer.addView(bufferingProgress, bufferParams);
+        inputScroll = new LinearLayout(this);
+        inputScroll.setOrientation(LinearLayout.VERTICAL);
+        inputScroll.setPadding(dp(14), dp(10), dp(14), dp(10));
+        inputScroll.setBackgroundColor(BG_COLOR);
 
-        // Build Custom Controller Overlay
-        buildCustomControllerOverlay();
+        inputScroll.addView(sectionTitle("STREAM / DRM / REQUEST SETTINGS"),
+                new LinearLayout.LayoutParams(-1, -2));
 
-        // Clicking anywhere on playerView toggles controller visibility
-        playerView.setOnClickListener(v -> toggleControls());
+        LinearLayout inputRow = new LinearLayout(this);
+        inputRow.setOrientation(LinearLayout.HORIZONTAL);
+        inputRow.setGravity(Gravity.CENTER_VERTICAL);
 
-        rootLayout.addView(
-                playerContainer,
-                new LinearLayout.LayoutParams(
-                        -1,
-                        0,
-                        0.30f
-                )
-        );
-
-        // Input section
-        inputScroll = new ScrollView(this);
-        inputScroll.setFillViewport(true);
-
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(
-                dp(14),
-                dp(12),
-                dp(14),
-                dp(20)
-        );
-
-        inputScroll.addView(content);
-
-        rootLayout.addView(
-                inputScroll,
-                new LinearLayout.LayoutParams(
-                        -1,
-                        0,
-                        0.70f
-                )
-        );
-
-        content.addView(
-                sectionTitle("STREAM / DRM / REQUEST SETTINGS")
-        );
-
-        urlInput = addField(
-                content,
-                "Video URL | Referer=...&Cookie=...&drmScheme=...",
-                true
-        );
-
-        urlInput.setMinLines(3);
+        urlInput = new EditText(this);
+        urlInput.setSingleLine(false);
+        urlInput.setMinLines(2);
+        urlInput.setMaxLines(3);
+        urlInput.setHint("Video URL | Referer=...&Cookie=...");
+        urlInput.setTextColor(Color.WHITE);
+        urlInput.setHintTextColor(Color.GRAY);
         urlInput.setTextSize(13);
+        urlInput.setPadding(dp(12), dp(8), dp(10), dp(8));
+        urlInput.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(75, 95, 120)));
+        LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(0, dp(72), 1f);
+        urlParams.rightMargin = dp(8);
+        inputRow.addView(urlInput, urlParams);
 
-        // Play Button
-        TextView playButton = makeActionButton(
-                "▶   PLAY STREAM",
-                true
-        );
-
+        TextView playButton = makeActionButton("▶ PLAY", true);
+        playButton.setTextSize(13);
         playButton.setOnClickListener(v -> playStream());
+        inputRow.addView(playButton, new LinearLayout.LayoutParams(dp(92), dp(52)));
+        inputScroll.addView(inputRow, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout.LayoutParams playParams =
-                new LinearLayout.LayoutParams(-1, dp(52));
-
-        playParams.topMargin = dp(8);
-        playParams.bottomMargin = dp(8);
-
-        content.addView(playButton, playParams);
-
-        // Status
         statusText = new TextView(this);
-        statusText.setText("Ready - Enter a stream URL");
+        statusText.setText("Ready - Enter a stream URL or choose an item below");
         statusText.setTextColor(Color.LTGRAY);
-        statusText.setTextSize(12);
-        statusText.setPadding(dp(4), dp(12), dp(4), dp(4));
+        statusText.setTextSize(11);
+        statusText.setPadding(dp(3), dp(5), dp(3), dp(5));
+        inputScroll.addView(statusText, new LinearLayout.LayoutParams(-1, -2));
 
-        content.addView(statusText);
+        eventWebView = new WebView(this);
+        eventWebView.getSettings().setJavaScriptEnabled(true);
+        eventWebView.getSettings().setDomStorageEnabled(true);
+        eventWebView.getSettings().setLoadsImagesAutomatically(true);
+        eventWebView.getSettings().setAllowFileAccess(false);
+        eventWebView.getSettings().setAllowContentAccess(false);
+        eventWebView.setBackgroundColor(Color.rgb(13, 17, 23));
+        eventWebView.setWebChromeClient(new WebChromeClient());
+        eventWebView.setWebViewClient(new WebViewClient());
+        eventWebView.addJavascriptInterface(new HtmlItemBridge(), "CustomWebView");
+        inputScroll.addView(eventWebView, new LinearLayout.LayoutParams(-1, 0, 1f));
+        loadEventHtml();
 
+        rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.70f));
         setContentView(rootLayout);
     }
 
     // ==========================================
-    // CUSTOM CONTROLLER OVERLAY & TIMELINE
+    // SIDE CONTROL BUTTONS
     // ==========================================
 
-    private void buildCustomControllerOverlay() {
-        customControlsOverlay = new FrameLayout(this);
-        customControlsOverlay.setLayoutParams(
-                new FrameLayout.LayoutParams(-1, -1)
-        );
-
-        // Clicking empty space on the overlay toggles hide/show
-        customControlsOverlay.setOnClickListener(v -> toggleControls());
-
-        // Bottom panel container with smooth dark gradient
-        LinearLayout bottomPanel = new LinearLayout(this);
-        bottomPanel.setOrientation(LinearLayout.VERTICAL);
-
-        GradientDrawable shadowGradient = new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{Color.TRANSPARENT, Color.argb(130, 0, 0, 0), Color.argb(220, 0, 0, 0)}
-        );
-        bottomPanel.setBackground(shadowGradient);
-        bottomPanel.setPadding(dp(14), dp(16), dp(14), dp(10));
-        bottomPanel.setClickable(true);
-        bottomPanel.setOnClickListener(v -> resetAutoHide());
-
-        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
-                -1, -2, Gravity.BOTTOM
-        );
-        customControlsOverlay.addView(bottomPanel, bottomParams);
-
-        // ------------------------------------------
-        // ROW 1: BUTTONS ROW (As shown in screenshot)
-        // ------------------------------------------
-        LinearLayout buttonsRow = new LinearLayout(this);
-        buttonsRow.setOrientation(LinearLayout.HORIZONTAL);
-        buttonsRow.setGravity(Gravity.CENTER);
-        buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
-
-        // 1. Aspect Ratio / Fit Toggle
-        addControllerButton(buttonsRow, "⛶", "Aspect Ratio", this::cycleResizeMode);
-
-        // 2. Audio Tracks
-        addControllerButton(buttonsRow, "♫", "Audio Track", () ->
-                showTrackSelection(C.TRACK_TYPE_AUDIO, "Audio Tracks")
-        );
-
-        // 3. PiP
-        addControllerButton(buttonsRow, "⧉", "PiP", this::enterPictureInPicture);
-
-        // 4. Rewind 10s
-        addControllerButton(buttonsRow, "◀◀", "Rewind 10s", () -> {
-            if (player != null) {
-                long pos = Math.max(0, player.getCurrentPosition() - 10000);
-                player.seekTo(pos);
-                updateSeekViews(pos);
-                resetAutoHide();
-            }
-        });
-
-        // 5. Play / Pause Button (slightly larger)
-        btnPlayPause = addControllerButton(buttonsRow, "▶", "Play/Pause", () -> {
-            if (player != null) {
-                if (player.isPlaying()) {
-                    player.pause();
-                    btnPlayPause.setText("▶");
-                } else {
-                    player.play();
-                    btnPlayPause.setText("❚❚");
-                }
-                resetAutoHide();
-            }
-        });
-        btnPlayPause.setTextSize(20);
-
-        // 6. Forward 10s
-        addControllerButton(buttonsRow, "▶▶", "Forward 10s", () -> {
-            if (player != null) {
-                long dur = player.getDuration();
-                long pos = player.getCurrentPosition() + 10000;
-                if (dur > 0 && pos > dur) pos = dur;
-                player.seekTo(pos);
-                updateSeekViews(pos);
-                resetAutoHide();
-            }
-        });
-
-        // 7. Subtitles
-        addControllerButton(buttonsRow, "CC", "Subtitles", () ->
-                showTrackSelection(C.TRACK_TYPE_TEXT, "Subtitle Tracks")
-        );
-
-        // 8. Settings Menu (Quality / Tracks / Speeds)
-        addControllerButton(buttonsRow, "⚙", "Settings", this::showSettingsDialog);
-
-        // 9. Fullscreen Toggle
-        addControllerButton(buttonsRow, "⊞", "Fullscreen", this::toggleFullscreen);
-
-        bottomPanel.addView(buttonsRow);
-
-        // ------------------------------------------
-        // ROW 2: TIMELINE / PROGRESS BAR ROW
-        // ------------------------------------------
-        LinearLayout timelineRow = new LinearLayout(this);
-        timelineRow.setOrientation(LinearLayout.HORIZONTAL);
-        timelineRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams timelineParams =
-                new LinearLayout.LayoutParams(-1, -2);
-        timelineParams.topMargin = dp(6);
-        timelineRow.setLayoutParams(timelineParams);
-
-        // Current Time TextView
-        timeCurrent = new TextView(this);
-        timeCurrent.setText("00:00");
-        timeCurrent.setTextColor(Color.WHITE);
-        timeCurrent.setTextSize(13);
-        timeCurrent.setTypeface(null, android.graphics.Typeface.BOLD);
-        timeCurrent.setPadding(0, 0, dp(4), 0);
-        timelineRow.addView(timeCurrent);
-
-        // Custom SeekBar
-        customSeekBar = new SeekBar(this);
-        customSeekBar.setMax(1000);
-        customSeekBar.setPadding(dp(8), dp(4), dp(8), dp(4));
-
-        // White circular thumb
-        GradientDrawable thumb = new GradientDrawable();
-        thumb.setShape(GradientDrawable.OVAL);
-        thumb.setColor(Color.WHITE);
-        thumb.setSize(dp(14), dp(14));
-        customSeekBar.setThumb(thumb);
-        customSeekBar.setThumbOffset(dp(7));
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            customSeekBar.setProgressTintList(ColorStateList.valueOf(Color.WHITE));
-            customSeekBar.setProgressBackgroundTintList(
-                    ColorStateList.valueOf(Color.argb(90, 255, 255, 255))
-            );
-            customSeekBar.setSecondaryProgressTintList(
-                    ColorStateList.valueOf(Color.argb(140, 255, 255, 255))
-            );
-        }
-
-        LinearLayout.LayoutParams seekParams =
-                new LinearLayout.LayoutParams(0, -2, 1.0f);
-        seekParams.leftMargin = dp(4);
-        seekParams.rightMargin = dp(4);
-        timelineRow.addView(customSeekBar, seekParams);
-
-        customSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (fromUser) {
-                    timeCurrent.setText(formatTime(progress));
-                    resetAutoHide();
-                }
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-                isUserSeeking = true;
-                handler.removeCallbacks(autoHideRunnable);
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-                if (player != null) {
-                    player.seekTo(seekBar.getProgress());
-                }
-                isUserSeeking = false;
-                resetAutoHide();
-            }
-        });
-
-        // Duration TextView
-        timeDuration = new TextView(this);
-        timeDuration.setText("00:00");
-        timeDuration.setTextColor(Color.WHITE);
-        timeDuration.setTextSize(13);
-        timeDuration.setTypeface(null, android.graphics.Typeface.BOLD);
-        timeDuration.setPadding(dp(4), 0, 0, 0);
-        timelineRow.addView(timeDuration);
-
-        bottomPanel.addView(timelineRow);
-
-        playerContainer.addView(customControlsOverlay);
-        resetAutoHide();
-    }
-
-    private TextView addControllerButton(
+    private TextView addSideButton(
             LinearLayout parent,
             String symbol,
             String description,
             Runnable action
     ) {
+
         TextView button = new TextView(this);
+
         button.setText(symbol);
         button.setTextColor(Color.WHITE);
-        button.setTextSize(17);
+        button.setTextSize(19);
         button.setGravity(Gravity.CENTER);
         button.setContentDescription(description);
         button.setFocusable(true);
         button.setClickable(true);
 
         GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.argb(160, 32, 44, 60));
-        background.setCornerRadius(dp(8));
+        background.setColor(Color.argb(185, 35, 48, 67));
+        background.setCornerRadius(dp(12));
+
         button.setBackground(background);
 
         LinearLayout.LayoutParams params =
-                new LinearLayout.LayoutParams(dp(38), dp(36));
-        params.leftMargin = dp(3);
-        params.rightMargin = dp(3);
+                new LinearLayout.LayoutParams(
+                        dp(40),
+                        dp(40)
+                );
+
+        params.topMargin = dp(3);
+        params.bottomMargin = dp(3);
 
         parent.addView(button, params);
 
         button.setOnClickListener(v -> {
             action.run();
-            resetAutoHide();
+            if (playerView != null && !isInPipMode() && !controlsLocked) {
+                playerView.showController();
+            }
         });
-
         return button;
-    }
-
-    private void updateSeekViews(long pos) {
-        if (customSeekBar != null) {
-            customSeekBar.setProgress((int) pos);
-        }
-        if (timeCurrent != null) {
-            timeCurrent.setText(formatTime(pos));
-        }
-    }
-
-    private String formatTime(long millis) {
-        if (millis <= 0) return "00:00";
-        long totalSeconds = millis / 1000;
-        long seconds = totalSeconds % 60;
-        long minutes = (totalSeconds / 60) % 60;
-        long hours = totalSeconds / 3600;
-
-        if (hours > 0) {
-            return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds);
-        } else {
-            return String.format(Locale.US, "%02d:%02d", minutes, seconds);
-        }
-    }
-
-    private void toggleControls() {
-        if (isInPipMode()) return;
-
-        if (isControlsVisible) {
-            hideControls();
-        } else {
-            showControls();
-        }
-    }
-
-    private void showControls() {
-        if (customControlsOverlay != null) {
-            customControlsOverlay.setVisibility(View.VISIBLE);
-            isControlsVisible = true;
-            resetAutoHide();
-        }
-    }
-
-    private void hideControls() {
-        if (isUserSeeking || isInPipMode()) return;
-
-        if (customControlsOverlay != null) {
-            customControlsOverlay.setVisibility(View.GONE);
-            isControlsVisible = false;
-        }
-    }
-
-    private void resetAutoHide() {
-        handler.removeCallbacks(autoHideRunnable);
-        if (isControlsVisible) {
-            handler.postDelayed(autoHideRunnable, 4000);
-        }
-    }
-
-    private void showSettingsDialog() {
-        if (player == null) return;
-
-        String[] options = {
-                "Video Quality / Tracks",
-                "Audio Tracks",
-                "Subtitle Tracks",
-                "Playback Speed",
-                "Aspect Ratio (Fit / Fill / Zoom)"
-        };
-
-        new AlertDialog.Builder(this)
-                .setTitle("Settings")
-                .setItems(options, (dialog, which) -> {
-                    switch (which) {
-                        case 0:
-                            showTrackSelection(C.TRACK_TYPE_VIDEO, "Video Quality");
-                            break;
-                        case 1:
-                            showTrackSelection(C.TRACK_TYPE_AUDIO, "Audio Tracks");
-                            break;
-                        case 2:
-                            showTrackSelection(C.TRACK_TYPE_TEXT, "Subtitle Tracks");
-                            break;
-                        case 3:
-                            showSpeedDialog();
-                            break;
-                        case 4:
-                            cycleResizeMode();
-                            break;
-                    }
-                })
-                .show();
     }
 
     private TextView makeActionButton(
@@ -786,39 +501,18 @@ public class MainActivity extends AppCompatActivity {
 
                     if (state == Player.STATE_BUFFERING) {
                         setStatus("Buffering...");
-                        if (bufferingProgress != null) {
-                            bufferingProgress.setVisibility(View.VISIBLE);
-                        }
                     } else if (state == Player.STATE_READY) {
                         setStatus("Playing / Ready");
-                        if (bufferingProgress != null) {
-                            bufferingProgress.setVisibility(View.GONE);
-                        }
                     } else if (state == Player.STATE_ENDED) {
                         setStatus("Playback ended");
-                        if (bufferingProgress != null) {
-                            bufferingProgress.setVisibility(View.GONE);
-                        }
                     } else if (state == Player.STATE_IDLE) {
                         setStatus("Ready");
-                        if (bufferingProgress != null) {
-                            bufferingProgress.setVisibility(View.GONE);
-                        }
-                    }
-                }
-
-                @Override
-                public void onIsPlayingChanged(boolean isPlaying) {
-                    if (btnPlayPause != null) {
-                        btnPlayPause.setText(isPlaying ? "❚❚" : "▶");
                     }
                 }
 
                 @Override
                 public void onPlayerError(PlaybackException error) {
-                    if (bufferingProgress != null) {
-                        bufferingProgress.setVisibility(View.GONE);
-                    }
+
                     setStatus(
                             "Playback error: "
                                     + error.getErrorCodeName()
@@ -1127,7 +821,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // AUDIO / SUBTITLE / VIDEO TRACK SELECTION
+    // AUDIO / SUBTITLE TRACK SELECTION
     // ==========================================
 
     private void showTrackSelection(
@@ -1151,117 +845,74 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String getTrackName(Format format) {
-
         StringBuilder name = new StringBuilder();
+        if (format.height > 0) {
+            String resolution = format.height + "p";
+            if (format.height >= 2160) resolution += " (4K UHD)";
+            else if (format.height >= 1080) resolution += " (FHD)";
+            else if (format.height >= 720) resolution += " (HD)";
+            else if (format.height >= 480) resolution += " (SD)";
+            name.append(resolution);
+            if (format.frameRate > 0) name.append(" • ").append(Math.round(format.frameRate)).append(" fps");
+            if (format.bitrate > 0) name.append(" • ").append(Math.round(format.bitrate / 1000f)).append(" kbps");
+            return name.toString();
+        }
 
-        if (format.label != null
-                && !format.label.trim().isEmpty()) {
-
+        if (format.label != null && !format.label.trim().isEmpty()) {
             name.append(format.label.trim());
-
-        } else if (format.language != null
-                && !format.language.equals("und")) {
-
-            Locale language =
-                    Locale.forLanguageTag(format.language);
-
-            String displayName =
-                    language.getDisplayLanguage(Locale.getDefault());
-
-            name.append(
-                    displayName.isEmpty()
-                            ? format.language
-                            : displayName
-            );
-
+        } else if (format.language != null && !format.language.equalsIgnoreCase("und")) {
+            String language = format.language.trim().toLowerCase(Locale.US);
+            if (language.length() == 3) {
+                if ("eng".equals(language)) language = "en";
+                else if ("ben".equals(language) || "beng".equals(language)) language = "bn";
+                else if ("hin".equals(language)) language = "hi";
+                else if ("urd".equals(language)) language = "ur";
+                else if ("ara".equals(language)) language = "ar";
+                else if ("spa".equals(language)) language = "es";
+                else if ("fra".equals(language)) language = "fr";
+                else if ("deu".equals(language) || "ger".equals(language)) language = "de";
+                else if ("por".equals(language)) language = "pt";
+                else if ("jpn".equals(language)) language = "ja";
+                else if ("kor".equals(language)) language = "ko";
+                else if ("chi".equals(language) || "zho".equals(language)) language = "zh";
+            }
+            Locale locale = Locale.forLanguageTag(language);
+            String displayName = locale.getDisplayLanguage(Locale.getDefault());
+            if (displayName == null || displayName.isEmpty()) displayName = format.language;
+            name.append(displayName);
         } else {
             name.append("Track");
         }
 
         String mime = format.sampleMimeType;
-
-        if (mime != null) {
-
+        if (mime != null && mime.startsWith("audio/")) {
             String codec;
-
             switch (mime) {
-                case "audio/ac3":
-                    codec = "AC3";
-                    break;
-
-                case "audio/eac3":
-                    codec = "E-AC3";
-                    break;
-
-                case "audio/vnd.dts":
-                    codec = "DTS";
-                    break;
-
-                case "audio/vnd.dts.hd":
-                    codec = "DTS-HD";
-                    break;
-
-                case "audio/true-hd":
-                    codec = "TrueHD";
-                    break;
-
-                case "audio/mp4a-latm":
-                    codec = "AAC";
-                    break;
-
-                case "audio/opus":
-                    codec = "Opus";
-                    break;
-
-                case "text/vtt":
-                    codec = "WebVTT";
-                    break;
-
-                case "application/ttml+xml":
-                    codec = "TTML";
-                    break;
-
-                default:
-                    codec = mime;
-                    break;
+                case "audio/ac3": codec = "AC3"; break;
+                case "audio/eac3": codec = "E-AC3"; break;
+                case "audio/vnd.dts": codec = "DTS"; break;
+                case "audio/vnd.dts.hd": codec = "DTS-HD"; break;
+                case "audio/true-hd": codec = "TrueHD"; break;
+                case "audio/mp4a-latm": codec = "AAC"; break;
+                case "audio/opus": codec = "Opus"; break;
+                default: codec = mime.substring("audio/".length()).toUpperCase(Locale.US); break;
             }
-
             name.append(" • ").append(codec);
-        }
-
-        if (format.channelCount > 0) {
-
-            String channels;
-
-            switch (format.channelCount) {
-                case 1:
-                    channels = "Mono";
-                    break;
-
-                case 2:
-                    channels = "Stereo";
-                    break;
-
-                case 6:
-                    channels = "5.1";
-                    break;
-
-                case 8:
-                    channels = "7.1";
-                    break;
-
-                default:
-                    channels = format.channelCount + "ch";
-                    break;
+            if (format.channelCount > 0) {
+                String channels;
+                switch (format.channelCount) {
+                    case 1: channels = "Mono"; break;
+                    case 2: channels = "Stereo"; break;
+                    case 6: channels = "5.1"; break;
+                    case 8: channels = "7.1"; break;
+                    default: channels = format.channelCount + "ch"; break;
+                }
+                name.append(" • ").append(channels);
             }
-
-            name.append(" • ").append(channels);
+        } else if (mime != null && (mime.startsWith("text/") || mime.startsWith("application/"))) {
+            if ("text/vtt".equals(mime)) name.append(" • WebVTT");
+            else if ("application/ttml+xml".equals(mime)) name.append(" • TTML");
         }
-
-        if (format.width > 0 && format.height > 0) {
-            name.append(" • ").append(format.width).append("x").append(format.height);
-        }
-
         return name.toString();
     }
 
@@ -1350,91 +1001,71 @@ public class MainActivity extends AppCompatActivity {
     // ==========================================
 
     private void toggleFullscreen() {
-
         fullscreen = !fullscreen;
-
         if (fullscreen) {
-
-            setRequestedOrientation(
-                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            );
-
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-
-            playerContainer.setLayoutParams(
-                    new LinearLayout.LayoutParams(
-                            -1,
-                            0,
-                            1f
-                    )
-            );
-
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-
-                WindowManager.LayoutParams attrs =
-                        getWindow().getAttributes();
-
-                attrs.layoutInDisplayCutoutMode =
-                        WindowManager.LayoutParams
-                                .LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-
+                WindowManager.LayoutParams attrs = getWindow().getAttributes();
+                attrs.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
                 getWindow().setAttributes(attrs);
             }
-
             getWindow().setStatusBarColor(Color.TRANSPARENT);
             getWindow().setNavigationBarColor(Color.TRANSPARENT);
-
-            int flags =
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-
+            int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
             getWindow().getDecorView().setSystemUiVisibility(flags);
-
             setStatus("Fullscreen Mode");
-
         } else {
-
-            setRequestedOrientation(
-                    ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            );
-
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_VISIBLE
-            );
-
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
             getWindow().setStatusBarColor(BG_COLOR);
             getWindow().setNavigationBarColor(BG_COLOR);
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-
-                WindowManager.LayoutParams attrs =
-                        getWindow().getAttributes();
-
-                attrs.layoutInDisplayCutoutMode =
-                        WindowManager.LayoutParams
-                                .LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-
+                WindowManager.LayoutParams attrs = getWindow().getAttributes();
+                attrs.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
                 getWindow().setAttributes(attrs);
             }
-
             titleBar.setVisibility(View.VISIBLE);
             inputScroll.setVisibility(View.VISIBLE);
-
-            playerContainer.setLayoutParams(
-                    new LinearLayout.LayoutParams(
-                            -1,
-                            0,
-                            0.30f
-                    )
-            );
-
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
             setStatus("Normal Mode");
         }
+        updateFullscreenButton();
+    }
+
+    private void updateFullscreenButton() {
+        if (fullscreenButton != null) {
+            fullscreenButton.setText(fullscreen ? "⤡" : "⤢");
+            fullscreenButton.setContentDescription(fullscreen ? "Exit fullscreen" : "Enter fullscreen");
+        }
+    }
+
+    private void setControlsLocked(boolean locked) {
+        controlsLocked = locked;
+        if (lockOverlay != null) lockOverlay.setVisibility(locked ? View.VISIBLE : View.GONE);
+        if (leftControls != null) leftControls.setVisibility(locked ? View.GONE : View.VISIBLE);
+        if (rightControls != null) rightControls.setVisibility(locked ? View.GONE : View.VISIBLE);
+        if (playerView != null && !locked) playerView.showController();
+        setStatus(locked ? "Player controls locked" : "Player controls unlocked");
+    }
+
+    private void showPlayerSettings() {
+        String[] options = {"Audio tracks", "Subtitle tracks", "Video tracks", "Resize mode", "Playback speed"};
+        new AlertDialog.Builder(this)
+                .setTitle("Player settings")
+                .setItems(options, (dialog, which) -> {
+                    switch (which) {
+                        case 0: showTrackSelection(C.TRACK_TYPE_AUDIO, "Audio Tracks"); break;
+                        case 1: showTrackSelection(C.TRACK_TYPE_TEXT, "Subtitle Tracks"); break;
+                        case 2: showTrackSelection(C.TRACK_TYPE_VIDEO, "Video Tracks"); break;
+                        case 3: cycleResizeMode(); break;
+                        case 4: showSpeedDialog(); break;
+                    }
+                }).show();
     }
 
     // ==========================================
@@ -1442,99 +1073,112 @@ public class MainActivity extends AppCompatActivity {
     // ==========================================
 
     private boolean isInPipMode() {
-
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
-                && isInPictureInPictureMode();
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode();
     }
 
     private void enterPictureInPicture() {
-
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             toast("Picture-in-Picture requires Android 8.0 or newer");
             return;
         }
-
         if (player == null || player.getMediaItemCount() == 0) {
             toast("প্রথমে ভিডিও চালু করুন");
             return;
         }
-
         try {
-
-            PictureInPictureParams params =
-                    new PictureInPictureParams.Builder()
-                            .setAspectRatio(new Rational(16, 9))
-                            .build();
-
-            enterPictureInPictureMode(params);
-
+            // Android PiP is activity-based. Restrict the activity content to the player view
+            // and hint the system to crop to the video's visible bounds.
+            Rect sourceRect = new Rect();
+            playerContainer.getGlobalVisibleRect(sourceRect);
+            wasFullscreenBeforePip = fullscreen;
+            PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                    .setAspectRatio(new Rational(16, 9));
+            if (!sourceRect.isEmpty()) builder.setSourceRectHint(sourceRect);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setAutoEnterEnabled(false);
+            enterPictureInPictureMode(builder.build());
         } catch (Exception e) {
-
             toast("PiP error: " + e.getMessage());
         }
     }
 
+    // PiP is entered only when the user taps the PiP button, not automatically on Home.
     @Override
     public void onUserLeaveHint() {
-
         super.onUserLeaveHint();
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && player != null
-                && player.isPlaying()) {
-
-            enterPictureInPicture();
-        }
     }
 
     @Override
-    public void onPictureInPictureModeChanged(
-            boolean isInPictureInPictureMode,
-            Configuration newConfig
-    ) {
-
-        super.onPictureInPictureModeChanged(
-                isInPictureInPictureMode,
-                newConfig
-        );
-
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
         if (isInPictureInPictureMode) {
-
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-
-            if (customControlsOverlay != null) {
-                customControlsOverlay.setVisibility(View.GONE);
-            }
-
-            playerContainer.setLayoutParams(
-                    new LinearLayout.LayoutParams(
-                            -1,
-                            0,
-                            1f
-                    )
-            );
-
+            leftControls.setVisibility(View.GONE);
+            rightControls.setVisibility(View.GONE);
+            if (lockOverlay != null) lockOverlay.setVisibility(View.GONE);
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
         } else {
-
-            if (!fullscreen) {
-
+            fullscreen = wasFullscreenBeforePip;
+            if (fullscreen) {
+                titleBar.setVisibility(View.GONE);
+                inputScroll.setVisibility(View.GONE);
+                playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+            } else {
                 titleBar.setVisibility(View.VISIBLE);
                 inputScroll.setVisibility(View.VISIBLE);
-
-                playerContainer.setLayoutParams(
-                        new LinearLayout.LayoutParams(
-                                -1,
-                                0,
-                                0.30f
-                        )
-                );
+                playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
             }
-
-            if (customControlsOverlay != null) {
-                showControls();
+            if (controlsLocked) {
+                setControlsLocked(true);
+            } else if (playerView != null) {
+                playerView.showController();
             }
+            updateFullscreenButton();
         }
+    }
+
+    private class HtmlItemBridge {
+        @JavascriptInterface
+        public void setWebViewString(String value) {
+            if (value == null) return;
+            runOnUiThread(() -> {
+                String output = value.trim();
+                if (output.startsWith("Playlist>")) output = output.substring("Playlist>".length()).trim();
+                if (urlInput != null && !output.isEmpty()) {
+                    urlInput.setText(output);
+                    urlInput.setSelection(urlInput.getText().length());
+                    setStatus("Link selected from web content");
+                }
+            });
+        }
+    }
+
+    private void loadEventHtml() {
+        final String htmlUrl = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/EventCode.html";
+        htmlLoadThread = new Thread(() -> {
+            OkHttpClient client = new OkHttpClient();
+            Request request = new Request.Builder().url(htmlUrl).build();
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful() || response.body() == null) {
+                    throw new IllegalStateException("HTTP " + response.code());
+                }
+                String html = response.body().string();
+                runOnUiThread(() -> {
+                    if (eventWebView != null && !isFinishing()) {
+                        eventWebView.loadDataWithBaseURL(
+                                "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/",
+                                html,
+                                "text/html",
+                                "UTF-8",
+                                null
+                        );
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> setStatus("Could not load web content: " + e.getMessage()));
+            }
+        }, "event-html-loader");
+        htmlLoadThread.start();
     }
 
     // ==========================================
@@ -1583,7 +1227,15 @@ public class MainActivity extends AppCompatActivity {
 
         super.onDestroy();
 
-        handler.removeCallbacksAndMessages(null);
+        if (htmlLoadThread != null) {
+            htmlLoadThread.interrupt();
+            htmlLoadThread = null;
+        }
+        if (eventWebView != null) {
+            eventWebView.removeJavascriptInterface("CustomWebView");
+            eventWebView.destroy();
+            eventWebView = null;
+        }
 
         if (player != null) {
 
