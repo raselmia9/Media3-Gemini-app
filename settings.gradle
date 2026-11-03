@@ -1,18 +1,27 @@
+
 pluginManagement {
+    includeBuild('media/build-logic-settings')
+
     repositories {
         google()
         mavenCentral()
         gradlePluginPortal()
     }
 }
+
+plugins {
+    id 'gradlebuild.media3-settings-logic'
+}
+
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
-        maven { url 'https://jitpack.io' }
     }
 }
 
-rootProject.name = "Media3-Gemini-app"
+rootProject.name = 'AppbuildTest'
+
 include ':app'
+
+includeMedia3.execute(file('media'))
