@@ -5,11 +5,8 @@ import android.widget.Button
 import android.widget.EditText
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.dash.DashMediaSource
-import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.upstream.DefaultHttpDataSource
 import androidx.media3.ui.PlayerView
 
@@ -39,13 +36,11 @@ class MainActivity : AppCompatActivity() {
     private fun playMedia(input: String) {
         releasePlayer()
 
-        // পাইপ (|) সাইন দিয়ে হেডার বা DRM আলাদা করা
         val parts = input.split("|")
         val videoUrl = parts[0].trim()
         
         val dataSourceFactory = DefaultHttpDataSource.Factory()
         
-        // যদি হেডারে Referer বা Cookie থাকে তা সেট করা
         for (i in 1 until parts.size) {
             val param = parts[i].trim()
             if (param.startsWith("Referer=", true)) {
@@ -57,7 +52,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // FFmpeg রেন্ডারার ব্যবহার নিশ্চিত করা যাতে অডিও ডাউনমিক্স হয়ে মিউট না হয়
         val renderersFactory = DefaultRenderersFactory(this)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
 
@@ -66,7 +60,6 @@ class MainActivity : AppCompatActivity() {
 
             val mediaItemBuilder = MediaItem.Builder().setUri(videoUrl)
 
-            // DRM (Clearkey) চেক ও কনফিগারেশন
             if (input.contains("drmScheme=clearkey", true)) {
                 val licenseKey = extractParam(input, "drmLicense")
                 if (licenseKey != null) {
@@ -75,7 +68,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // স্ট্রিম টাইপ অনুযায়ী মিডিয়া সোর্স তৈরি
             val mediaItem = mediaItemBuilder.build()
             exoPlayer.setMediaItem(mediaItem)
             exoPlayer.prepare()
