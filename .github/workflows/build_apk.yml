@@ -20,7 +20,7 @@ jobs:
           java-version: '17'
 
       - name: Build Debug APK using Gradle
-        run: gradle assembleDebug --warning-mode all
+        run: gradle assembleDebug
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
