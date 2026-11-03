@@ -46,6 +46,6 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer-hls:1.4.1"
     implementation "androidx.media3:media3-exoplayer-dash:1.4.1"
 
-    // FFmpeg Audio Extension (অডিও ডাউনমিক্সিং ও সব ধরনের অডিও সাপোর্টের জন্য)
+    // FFmpeg Audio Extension
     implementation "androidx.media3:media3-exoplayer-ffmpeg:1.4.1"
 }
