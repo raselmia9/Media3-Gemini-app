@@ -1,21 +1,22 @@
-
 package com.raselahomed467.advancedmedia3player;
 
 import android.app.AlertDialog;
 import android.app.PictureInPictureParams;
 import android.content.pm.ActivityInfo;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.Rational;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
-import android.graphics.Rect;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
@@ -23,10 +24,10 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
+import android.widget.ProgressBar;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.view.MotionEvent;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -78,21 +79,62 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout inputScroll;
     private WebView eventWebView;
     private Thread htmlLoadThread;
-    private FrameLayout lockOverlay;
-    private TextView unlockButton;
-    private TextView fullscreenButton;
-    private boolean controlsLocked = false;
-    private boolean wasFullscreenBeforePip = false;
 
     private FrameLayout playerContainer;
-    private LinearLayout leftControls;
-    private LinearLayout rightControls;
+
+    // Custom Controls Overlay & Elements
+    private FrameLayout customControlsOverlay;
+    private LinearLayout bottomPanel;
+    private ProgressBar bufferingProgress;
+    private TextView btnPlayPause;
+    private TextView timeCurrent;
+    private TextView timeDuration;
+    private SeekBar customSeekBar;
+    private TextView fullscreenButton;
+
+    // Lock Overlay
+    private FrameLayout lockOverlay;
+    private TextView unlockButton;
+    private boolean controlsLocked = false;
 
     private EditText urlInput;
     private TextView statusText;
 
     private boolean fullscreen = false;
     private int resizeMode = 0;
+    private boolean isControlsVisible = true;
+    private boolean isUserSeeking = false;
+    private boolean wasFullscreenBeforePip = false;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable autoHideRunnable = this::hideControls;
+
+    // Progress bar updater
+    private final Runnable updateProgressRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (player != null && !isUserSeeking) {
+                long current = player.getCurrentPosition();
+                long duration = player.getDuration();
+
+                if (duration > 0) {
+                    customSeekBar.setMax((int) duration);
+                    customSeekBar.setProgress((int) current);
+                    timeDuration.setText(formatTime(duration));
+                } else {
+                    timeDuration.setText("LIVE");
+                }
+                timeCurrent.setText(formatTime(current));
+
+                if (player.isPlaying()) {
+                    btnPlayPause.setText("❚❚");
+                } else {
+                    btnPlayPause.setText("▶");
+                }
+            }
+            handler.postDelayed(this, 500);
+        }
+    };
 
     private final int BG_COLOR = Color.rgb(9, 13, 22);
     private final int BUTTON_COLOR = Color.rgb(35, 48, 67);
@@ -122,6 +164,8 @@ public class MainActivity extends AppCompatActivity {
         buildScreen();
         initializePlayer();
 
+        handler.post(updateProgressRunnable);
+
         getOnBackPressedDispatcher().addCallback(
                 this,
                 new OnBackPressedCallback(true) {
@@ -149,6 +193,7 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.setOrientation(LinearLayout.VERTICAL);
         rootLayout.setBackgroundColor(BG_COLOR);
 
+        // Title Bar
         titleBar = new TextView(this);
         titleBar.setText("ADVANCED MEDIA3 PLAYER");
         titleBar.setTextColor(Color.WHITE);
@@ -158,84 +203,53 @@ public class MainActivity extends AppCompatActivity {
         titleBar.setTypeface(null, android.graphics.Typeface.BOLD);
         rootLayout.addView(titleBar, new LinearLayout.LayoutParams(-1, dp(52)));
 
+        // Player Container
         playerContainer = new FrameLayout(this);
         playerContainer.setBackgroundColor(Color.BLACK);
+
         playerView = new PlayerView(this);
-        playerView.setUseController(true);
-        playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
-        playerView.setControllerShowTimeoutMs(3500);
-        playerView.setControllerHideOnTouch(true);
-        playerView.setShowNextButton(false);
-        playerView.setShowPreviousButton(false);
-        playerView.setShowSubtitleButton(false);
+        // Disable ExoPlayer default built-in controls completely
+        playerView.setUseController(false);
         playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
         playerView.setBackgroundColor(Color.BLACK);
         playerContainer.addView(playerView, new FrameLayout.LayoutParams(-1, -1));
 
-        leftControls = new LinearLayout(this);
-        leftControls.setOrientation(LinearLayout.VERTICAL);
-        leftControls.setGravity(Gravity.CENTER);
-        // Audio and subtitle selection are grouped under the gear menu.
-
-        rightControls = new LinearLayout(this);
-        rightControls.setOrientation(LinearLayout.VERTICAL);
-        rightControls.setGravity(Gravity.CENTER);
-
-        addSideButton(rightControls, "⚙", "Settings", this::showPlayerSettings);
-
-        fullscreenButton = addSideButton(
-                rightControls, "⛶", "Enter fullscreen", this::toggleFullscreen
+        // Buffering Indicator in center
+        bufferingProgress = new ProgressBar(this);
+        bufferingProgress.setIndeterminate(true);
+        bufferingProgress.setVisibility(View.GONE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            bufferingProgress.setIndeterminateTintList(
+                    ColorStateList.valueOf(Color.rgb(85, 194, 255))
+            );
+        }
+        FrameLayout.LayoutParams bufferParams = new FrameLayout.LayoutParams(
+                dp(48), dp(48), Gravity.CENTER
         );
-        addSideButton(rightControls, "▣", "Picture in Picture", this::enterPictureInPicture);
-        addSideButton(rightControls, "🔒", "Lock controls", () -> setControlsLocked(true));
+        playerContainer.addView(bufferingProgress, bufferParams);
 
-        FrameLayout.LayoutParams rightParams = new FrameLayout.LayoutParams(
-                dp(48), -2, Gravity.CENTER_VERTICAL | Gravity.END
-        );
-        rightParams.rightMargin = dp(5);
-        playerContainer.addView(rightControls, rightParams);
+        // Custom Controller Overlay
+        buildCustomControls();
+        playerContainer.addView(customControlsOverlay, new FrameLayout.LayoutParams(-1, -1));
 
-        lockOverlay = new FrameLayout(this);
-        lockOverlay.setBackgroundColor(Color.TRANSPARENT);
-        lockOverlay.setVisibility(View.GONE);
-        lockOverlay.setClickable(true);
-        lockOverlay.setOnTouchListener((v, event) -> true);
-        unlockButton = new TextView(this);
-        unlockButton.setText("🔓");
-        unlockButton.setTextColor(Color.WHITE);
-        unlockButton.setTextSize(22);
-        unlockButton.setGravity(Gravity.CENTER);
-        unlockButton.setContentDescription("Unlock player controls");
-        GradientDrawable unlockBg = new GradientDrawable();
-        unlockBg.setColor(Color.argb(210, 35, 48, 67));
-        unlockBg.setCornerRadius(dp(14));
-        unlockButton.setBackground(unlockBg);
-        FrameLayout.LayoutParams unlockParams = new FrameLayout.LayoutParams(
-                dp(52), dp(52), Gravity.CENTER_VERTICAL | Gravity.END
-        );
-        unlockParams.rightMargin = dp(8);
-        lockOverlay.addView(unlockButton, unlockParams);
-        unlockButton.setOnClickListener(v -> setControlsLocked(false));
+        // Lock Overlay (When locked, covers video to prevent touch and shows unlock button)
+        buildLockOverlay();
         playerContainer.addView(lockOverlay, new FrameLayout.LayoutParams(-1, -1));
-
-        playerView.setControllerVisibilityListener(
-                (PlayerView.ControllerVisibilityListener) visibility -> {
-                    if (!controlsLocked && !isInPipMode()) {
-                        int sideVisibility = visibility == View.VISIBLE ? View.VISIBLE : View.GONE;
-                        leftControls.setVisibility(sideVisibility);
-                        rightControls.setVisibility(sideVisibility);
-                    }
-                }
-        );
 
         rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.30f));
 
+        // Bottom Section: URL input + Play button + Web content
+        // padding is 0 here so the WebView has fixed edge-to-edge width with zero side margins
         inputScroll = new LinearLayout(this);
         inputScroll.setOrientation(LinearLayout.VERTICAL);
-        inputScroll.setPadding(dp(14), dp(10), dp(14), dp(10));
         inputScroll.setBackgroundColor(BG_COLOR);
 
-        inputScroll.addView(sectionTitle("STREAM / DRM / REQUEST SETTINGS"),
+        // Header container for Input & Status with appropriate side padding
+        LinearLayout inputHeader = new LinearLayout(this);
+        inputHeader.setOrientation(LinearLayout.VERTICAL);
+        inputHeader.setPadding(dp(14), dp(8), dp(14), dp(6));
+
+        inputHeader.addView(sectionTitle("STREAM / DRM / REQUEST SETTINGS"),
                 new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout inputRow = new LinearLayout(this);
@@ -260,26 +274,36 @@ public class MainActivity extends AppCompatActivity {
         playButton.setTextSize(13);
         playButton.setOnClickListener(v -> playStream());
         inputRow.addView(playButton, new LinearLayout.LayoutParams(dp(92), dp(52)));
-        inputScroll.addView(inputRow, new LinearLayout.LayoutParams(-1, -2));
+        inputHeader.addView(inputRow, new LinearLayout.LayoutParams(-1, -2));
 
         statusText = new TextView(this);
         statusText.setText("Ready - Enter a stream URL or choose an item below");
         statusText.setTextColor(Color.LTGRAY);
         statusText.setTextSize(11);
-        statusText.setPadding(dp(3), dp(5), dp(3), dp(5));
-        inputScroll.addView(statusText, new LinearLayout.LayoutParams(-1, -2));
+        statusText.setPadding(dp(3), dp(4), dp(3), dp(4));
+        inputHeader.addView(statusText, new LinearLayout.LayoutParams(-1, -2));
 
+        inputScroll.addView(inputHeader, new LinearLayout.LayoutParams(-1, -2));
+
+        // WebView with full-bleed width (0 margin, 0 padding)
         eventWebView = new WebView(this);
         eventWebView.getSettings().setJavaScriptEnabled(true);
         eventWebView.getSettings().setDomStorageEnabled(true);
         eventWebView.getSettings().setLoadsImagesAutomatically(true);
+        eventWebView.getSettings().setUseWideViewPort(true);
+        eventWebView.getSettings().setLoadWithOverviewMode(true);
         eventWebView.getSettings().setAllowFileAccess(false);
         eventWebView.getSettings().setAllowContentAccess(false);
+        eventWebView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
         eventWebView.setBackgroundColor(Color.rgb(13, 17, 23));
         eventWebView.setWebChromeClient(new WebChromeClient());
         eventWebView.setWebViewClient(new WebViewClient());
         eventWebView.addJavascriptInterface(new HtmlItemBridge(), "CustomWebView");
-        inputScroll.addView(eventWebView, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        webParams.setMargins(0, 0, 0, 0);
+        inputScroll.addView(eventWebView, webParams);
+
         loadEventHtml();
 
         rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.70f));
@@ -287,59 +311,277 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // SIDE CONTROL BUTTONS
+    // CUSTOM CONTROLLER & TIMELINE OVERLAY
     // ==========================================
 
-    private TextView addSideButton(
+    private void buildCustomControls() {
+        customControlsOverlay = new FrameLayout(this);
+        customControlsOverlay.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+
+        // Tapping empty overlay area toggles show/hide
+        customControlsOverlay.setOnClickListener(v -> toggleControls());
+
+        bottomPanel = new LinearLayout(this);
+        bottomPanel.setOrientation(LinearLayout.VERTICAL);
+
+        GradientDrawable shadowGradient = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.TRANSPARENT, Color.argb(140, 0, 0, 0), Color.argb(220, 0, 0, 0)}
+        );
+        bottomPanel.setBackground(shadowGradient);
+        bottomPanel.setPadding(dp(12), dp(10), dp(12), dp(8));
+        bottomPanel.setClickable(true);
+        bottomPanel.setOnClickListener(v -> resetAutoHide());
+
+        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
+                -1, -2, Gravity.BOTTOM
+        );
+        customControlsOverlay.addView(bottomPanel, bottomParams);
+
+        // ------------------------------------------
+        // ROW 1: BUTTONS ROW (ALL HORIZONTAL)
+        // ------------------------------------------
+        LinearLayout buttonsRow = new LinearLayout(this);
+        buttonsRow.setOrientation(LinearLayout.HORIZONTAL);
+        buttonsRow.setGravity(Gravity.CENTER);
+        buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+
+        // 1. Lock icon
+        addControllerButton(buttonsRow, "🔒", "Lock controls", () -> setControlsLocked(true));
+
+        // 2. Rewind 10s
+        addControllerButton(buttonsRow, "◀◀", "Rewind 10s", this::rewind10s);
+
+        // 3. Play / Pause Button (highlighted)
+        btnPlayPause = addControllerButton(buttonsRow, "▶", "Play/Pause", this::togglePlayPause);
+        btnPlayPause.setTextSize(21);
+
+        // 4. Forward 10s
+        addControllerButton(buttonsRow, "▶▶", "Forward 10s", this::forward10s);
+
+        // 5. PiP icon
+        addControllerButton(buttonsRow, "▣", "Picture in Picture", this::enterPictureInPicture);
+
+        // 6. Settings (Gear) icon: Audio, Subtitle, Video tracks, Resize, Speed
+        addControllerButton(buttonsRow, "⚙", "Settings", this::showPlayerSettings);
+
+        // 7. Fullscreen Toggle (Enter ⤢ / Exit ⤡)
+        fullscreenButton = addControllerButton(buttonsRow, "⤢", "Enter fullscreen", this::toggleFullscreen);
+
+        bottomPanel.addView(buttonsRow);
+
+        // ------------------------------------------
+        // ROW 2: TIMELINE / PROGRESS BAR ROW (HORIZONTAL)
+        // ------------------------------------------
+        LinearLayout timelineRow = new LinearLayout(this);
+        timelineRow.setOrientation(LinearLayout.HORIZONTAL);
+        timelineRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams timelineParams = new LinearLayout.LayoutParams(-1, -2);
+        timelineParams.topMargin = dp(4);
+        timelineRow.setLayoutParams(timelineParams);
+
+        timeCurrent = new TextView(this);
+        timeCurrent.setText("00:00");
+        timeCurrent.setTextColor(Color.WHITE);
+        timeCurrent.setTextSize(12);
+        timeCurrent.setTypeface(null, android.graphics.Typeface.BOLD);
+        timelineRow.addView(timeCurrent, new LinearLayout.LayoutParams(-2, -2));
+
+        customSeekBar = new SeekBar(this);
+        customSeekBar.setMax(100);
+        customSeekBar.setProgress(0);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            customSeekBar.setProgressTintList(ColorStateList.valueOf(PRIMARY_COLOR));
+            customSeekBar.setThumbTintList(ColorStateList.valueOf(Color.WHITE));
+        }
+        LinearLayout.LayoutParams seekParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        seekParams.leftMargin = dp(8);
+        seekParams.rightMargin = dp(8);
+        timelineRow.addView(customSeekBar, seekParams);
+
+        timeDuration = new TextView(this);
+        timeDuration.setText("00:00");
+        timeDuration.setTextColor(Color.WHITE);
+        timeDuration.setTextSize(12);
+        timeDuration.setTypeface(null, android.graphics.Typeface.BOLD);
+        timelineRow.addView(timeDuration, new LinearLayout.LayoutParams(-2, -2));
+
+        customSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser && player != null) {
+                    timeCurrent.setText(formatTime(progress));
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                isUserSeeking = true;
+                handler.removeCallbacks(autoHideRunnable);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                if (player != null) {
+                    player.seekTo(seekBar.getProgress());
+                }
+                isUserSeeking = false;
+                resetAutoHide();
+            }
+        });
+
+        bottomPanel.addView(timelineRow);
+    }
+
+    private void buildLockOverlay() {
+        lockOverlay = new FrameLayout(this);
+        lockOverlay.setBackgroundColor(Color.TRANSPARENT);
+        lockOverlay.setVisibility(View.GONE);
+        lockOverlay.setClickable(true);
+        lockOverlay.setOnTouchListener((v, event) -> true);
+
+        unlockButton = new TextView(this);
+        unlockButton.setText("🔓");
+        unlockButton.setTextColor(Color.WHITE);
+        unlockButton.setTextSize(22);
+        unlockButton.setGravity(Gravity.CENTER);
+        unlockButton.setContentDescription("Unlock player controls");
+        GradientDrawable unlockBg = new GradientDrawable();
+        unlockBg.setColor(Color.argb(215, 35, 48, 67));
+        unlockBg.setCornerRadius(dp(14));
+        unlockButton.setBackground(unlockBg);
+
+        FrameLayout.LayoutParams unlockParams = new FrameLayout.LayoutParams(
+                dp(48), dp(48), Gravity.CENTER_VERTICAL | Gravity.END
+        );
+        unlockParams.rightMargin = dp(12);
+        lockOverlay.addView(unlockButton, unlockParams);
+        unlockButton.setOnClickListener(v -> setControlsLocked(false));
+    }
+
+    private TextView addControllerButton(
             LinearLayout parent,
             String symbol,
             String description,
             Runnable action
     ) {
-
         TextView button = new TextView(this);
-
         button.setText(symbol);
         button.setTextColor(Color.WHITE);
-        button.setTextSize(19);
+        button.setTextSize(18);
         button.setGravity(Gravity.CENTER);
         button.setContentDescription(description);
         button.setFocusable(true);
         button.setClickable(true);
 
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.argb(185, 35, 48, 67));
-        background.setCornerRadius(dp(12));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(180, 35, 48, 67));
+        bg.setCornerRadius(dp(12));
+        button.setBackground(bg);
 
-        button.setBackground(background);
-
-        LinearLayout.LayoutParams params =
-                new LinearLayout.LayoutParams(
-                        dp(40),
-                        dp(40)
-                );
-
-        params.topMargin = dp(3);
-        params.bottomMargin = dp(3);
-
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(40));
+        params.leftMargin = dp(4);
+        params.rightMargin = dp(4);
         parent.addView(button, params);
 
         button.setOnClickListener(v -> {
             action.run();
-            if (playerView != null && !isInPipMode() && !controlsLocked) {
-                playerView.showController();
-            }
+            resetAutoHide();
         });
         return button;
+    }
+
+    private void showControls() {
+        if (controlsLocked || isInPipMode()) return;
+        customControlsOverlay.setVisibility(View.VISIBLE);
+        isControlsVisible = true;
+        resetAutoHide();
+    }
+
+    private void hideControls() {
+        if (isUserSeeking || isInPipMode()) return;
+        customControlsOverlay.setVisibility(View.GONE);
+        isControlsVisible = false;
+    }
+
+    private void toggleControls() {
+        if (controlsLocked || isInPipMode()) return;
+        if (isControlsVisible) {
+            hideControls();
+        } else {
+            showControls();
+        }
+    }
+
+    private void resetAutoHide() {
+        handler.removeCallbacks(autoHideRunnable);
+        if (isControlsVisible && !controlsLocked && !isInPipMode()) {
+            handler.postDelayed(autoHideRunnable, 4000);
+        }
+    }
+
+    private void setControlsLocked(boolean locked) {
+        controlsLocked = locked;
+        if (locked) {
+            hideControls();
+            if (lockOverlay != null) lockOverlay.setVisibility(View.VISIBLE);
+            setStatus("Controls locked");
+        } else {
+            if (lockOverlay != null) lockOverlay.setVisibility(View.GONE);
+            showControls();
+            setStatus("Controls unlocked");
+        }
+    }
+
+    private void togglePlayPause() {
+        if (player == null) return;
+        if (player.isPlaying()) {
+            player.pause();
+            btnPlayPause.setText("▶");
+        } else {
+            player.play();
+            btnPlayPause.setText("❚❚");
+        }
+    }
+
+    private void rewind10s() {
+        if (player == null) return;
+        long pos = Math.max(0, player.getCurrentPosition() - 10000);
+        player.seekTo(pos);
+        updateSeekViews(pos);
+    }
+
+    private void forward10s() {
+        if (player == null) return;
+        long dur = player.getDuration();
+        long pos = player.getCurrentPosition() + 10000;
+        if (dur > 0 && pos > dur) pos = dur;
+        player.seekTo(pos);
+        updateSeekViews(pos);
+    }
+
+    private void updateSeekViews(long pos) {
+        customSeekBar.setProgress((int) pos);
+        timeCurrent.setText(formatTime(pos));
+    }
+
+    private String formatTime(long ms) {
+        if (ms <= 0) return "00:00";
+        long totalSec = ms / 1000;
+        long sec = totalSec % 60;
+        long min = (totalSec / 60) % 60;
+        long hours = totalSec / 3600;
+        if (hours > 0) {
+            return String.format(Locale.US, "%02d:%02d:%02d", hours, min, sec);
+        }
+        return String.format(Locale.US, "%02d:%02d", min, sec);
     }
 
     private TextView makeActionButton(
             String text,
             boolean primary
     ) {
-
         TextView button = new TextView(this);
-
         button.setText(text);
         button.setTextColor(Color.WHITE);
         button.setTextSize(primary ? 15 : 12);
@@ -347,74 +589,21 @@ public class MainActivity extends AppCompatActivity {
         button.setTypeface(null, android.graphics.Typeface.BOLD);
 
         GradientDrawable background = new GradientDrawable();
-        background.setColor(
-                primary ? PRIMARY_COLOR : BUTTON_COLOR
-        );
+        background.setColor(primary ? PRIMARY_COLOR : BUTTON_COLOR);
         background.setCornerRadius(dp(10));
-
         button.setBackground(background);
         button.setClickable(true);
-
         return button;
     }
 
     private TextView sectionTitle(String text) {
-
         TextView view = new TextView(this);
-
         view.setText(text);
         view.setTextColor(Color.rgb(85, 194, 255));
         view.setTextSize(12);
         view.setTypeface(null, android.graphics.Typeface.BOLD);
-        view.setPadding(0, dp(8), 0, dp(8));
-
+        view.setPadding(0, dp(4), 0, dp(6));
         return view;
-    }
-
-    private EditText addField(
-            LinearLayout parent,
-            String hint,
-            boolean multiline
-    ) {
-
-        EditText field = new EditText(this);
-
-        field.setSingleLine(!multiline);
-        field.setHint(hint);
-
-        field.setTextColor(Color.WHITE);
-        field.setHintTextColor(Color.GRAY);
-        field.setTextSize(14);
-
-        field.setPadding(
-                dp(13),
-                dp(8),
-                dp(13),
-                dp(8)
-        );
-
-        field.setBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(
-                        Color.rgb(75, 95, 120)
-                )
-        );
-
-        if (multiline) {
-            field.setMinLines(2);
-            field.setGravity(Gravity.TOP | Gravity.START);
-        }
-
-        LinearLayout.LayoutParams params =
-                new LinearLayout.LayoutParams(
-                        -1,
-                        multiline ? dp(100) : dp(54)
-                );
-
-        params.bottomMargin = dp(8);
-
-        parent.addView(field, params);
-
-        return field;
     }
 
     // ==========================================
@@ -422,9 +611,7 @@ public class MainActivity extends AppCompatActivity {
     // ==========================================
 
     private void initializePlayer() {
-
         try {
-
             ChannelMixingAudioProcessor downmixProcessor =
                     new ChannelMixingAudioProcessor();
 
@@ -500,19 +687,23 @@ public class MainActivity extends AppCompatActivity {
                 public void onPlaybackStateChanged(int state) {
 
                     if (state == Player.STATE_BUFFERING) {
+                        if (bufferingProgress != null) bufferingProgress.setVisibility(View.VISIBLE);
                         setStatus("Buffering...");
                     } else if (state == Player.STATE_READY) {
+                        if (bufferingProgress != null) bufferingProgress.setVisibility(View.GONE);
                         setStatus("Playing / Ready");
                     } else if (state == Player.STATE_ENDED) {
+                        if (bufferingProgress != null) bufferingProgress.setVisibility(View.GONE);
                         setStatus("Playback ended");
                     } else if (state == Player.STATE_IDLE) {
+                        if (bufferingProgress != null) bufferingProgress.setVisibility(View.GONE);
                         setStatus("Ready");
                     }
                 }
 
                 @Override
                 public void onPlayerError(PlaybackException error) {
-
+                    if (bufferingProgress != null) bufferingProgress.setVisibility(View.GONE);
                     setStatus(
                             "Playback error: "
                                     + error.getErrorCodeName()
@@ -706,6 +897,8 @@ public class MainActivity extends AppCompatActivity {
             player.prepare();
             player.play();
 
+            btnPlayPause.setText("❚❚");
+            resetAutoHide();
             setStatus("Loading stream...");
 
         } catch (Exception e) {
@@ -821,7 +1014,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // AUDIO / SUBTITLE TRACK SELECTION
+    // AUDIO / SUBTITLE / VIDEO TRACK SELECTION
     // ==========================================
 
     private void showTrackSelection(
@@ -1006,7 +1199,7 @@ public class MainActivity extends AppCompatActivity {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 WindowManager.LayoutParams attrs = getWindow().getAttributes();
                 attrs.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
@@ -1044,15 +1237,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void setControlsLocked(boolean locked) {
-        controlsLocked = locked;
-        if (lockOverlay != null) lockOverlay.setVisibility(locked ? View.VISIBLE : View.GONE);
-        if (leftControls != null) leftControls.setVisibility(locked ? View.GONE : View.VISIBLE);
-        if (rightControls != null) rightControls.setVisibility(locked ? View.GONE : View.VISIBLE);
-        if (playerView != null && !locked) playerView.showController();
-        setStatus(locked ? "Player controls locked" : "Player controls unlocked");
-    }
-
     private void showPlayerSettings() {
         String[] options = {"Audio tracks", "Subtitle tracks", "Video tracks", "Resize mode", "Playback speed"};
         new AlertDialog.Builder(this)
@@ -1069,7 +1253,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // PICTURE IN PICTURE
+    // PICTURE IN PICTURE (RELIABLE & CLEAN)
     // ==========================================
 
     private boolean isInPipMode() {
@@ -1086,25 +1270,43 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         try {
-            // Android PiP is activity-based. Restrict the activity content to the player view
-            // and hint the system to crop to the video's visible bounds.
-            Rect sourceRect = new Rect();
-            playerContainer.getGlobalVisibleRect(sourceRect);
             wasFullscreenBeforePip = fullscreen;
+
+            // Reset orientation lock if in landscape so window manager does not hang in PiP
+            if (fullscreen) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            }
+
+            // Calculate clean aspect ratio from playing video
+            Rational aspectRatio = new Rational(16, 9);
+            if (player != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
+                int vw = player.getVideoSize().width;
+                int vh = player.getVideoSize().height;
+                float r = (float) vw / (float) vh;
+                if (r >= 0.42f && r <= 2.39f) {
+                    aspectRatio = new Rational(vw, vh);
+                }
+            }
+
             PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
-                    .setAspectRatio(new Rational(16, 9));
-            if (!sourceRect.isEmpty()) builder.setSourceRectHint(sourceRect);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setAutoEnterEnabled(false);
+                    .setAspectRatio(aspectRatio);
+
+            // Hide non-player UI BEFORE entering PiP so the captured snapshot is strictly the video
+            titleBar.setVisibility(View.GONE);
+            inputScroll.setVisibility(View.GONE);
+            if (customControlsOverlay != null) customControlsOverlay.setVisibility(View.GONE);
+            if (lockOverlay != null) lockOverlay.setVisibility(View.GONE);
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
+
             enterPictureInPictureMode(builder.build());
         } catch (Exception e) {
+            if (!wasFullscreenBeforePip) {
+                titleBar.setVisibility(View.VISIBLE);
+                inputScroll.setVisibility(View.VISIBLE);
+                playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
+            }
             toast("PiP error: " + e.getMessage());
         }
-    }
-
-    // PiP is entered only when the user taps the PiP button, not automatically on Home.
-    @Override
-    public void onUserLeaveHint() {
-        super.onUserLeaveHint();
     }
 
     @Override
@@ -1113,29 +1315,34 @@ public class MainActivity extends AppCompatActivity {
         if (isInPictureInPictureMode) {
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-            leftControls.setVisibility(View.GONE);
-            rightControls.setVisibility(View.GONE);
+            if (customControlsOverlay != null) customControlsOverlay.setVisibility(View.GONE);
             if (lockOverlay != null) lockOverlay.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
         } else {
             fullscreen = wasFullscreenBeforePip;
             if (fullscreen) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                 titleBar.setVisibility(View.GONE);
                 inputScroll.setVisibility(View.GONE);
-                playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+                playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
             } else {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
                 titleBar.setVisibility(View.VISIBLE);
                 inputScroll.setVisibility(View.VISIBLE);
                 playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
             }
             if (controlsLocked) {
-                setControlsLocked(true);
-            } else if (playerView != null) {
-                playerView.showController();
+                if (lockOverlay != null) lockOverlay.setVisibility(View.VISIBLE);
+            } else {
+                showControls();
             }
             updateFullscreenButton();
         }
     }
+
+    // ==========================================
+    // WEBVIEW BRIDGE & GITHUB HTML
+    // ==========================================
 
     private class HtmlItemBridge {
         @JavascriptInterface
@@ -1143,7 +1350,9 @@ public class MainActivity extends AppCompatActivity {
             if (value == null) return;
             runOnUiThread(() -> {
                 String output = value.trim();
-                if (output.startsWith("Playlist>")) output = output.substring("Playlist>".length()).trim();
+                if (output.startsWith("Playlist>")) {
+                    output = output.substring("Playlist>".length()).trim();
+                }
                 if (urlInput != null && !output.isEmpty()) {
                     urlInput.setText(output);
                     urlInput.setSelection(urlInput.getText().length());
@@ -1186,14 +1395,12 @@ public class MainActivity extends AppCompatActivity {
     // ==========================================
 
     private void setStatus(String message) {
-
         if (statusText != null) {
             statusText.setText(message);
         }
     }
 
     private void toast(String message) {
-
         Toast.makeText(
                 this,
                 message,
@@ -1202,7 +1409,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String value(EditText edit) {
-
         return edit == null
                 ? ""
                 : edit.getText().toString().trim();
@@ -1214,9 +1420,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onStop() {
-
         super.onStop();
-
         if (player != null && !isInPipMode()) {
             player.pause();
         }
@@ -1224,8 +1428,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-
         super.onDestroy();
+
+        handler.removeCallbacksAndMessages(null);
 
         if (htmlLoadThread != null) {
             htmlLoadThread.interrupt();
@@ -1238,11 +1443,8 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (player != null) {
-
             playerView.setPlayer(null);
-
             player.release();
-
             player = null;
         }
     }
