@@ -4,15 +4,12 @@ package com.raselahomed467.advancedmedia3player;
 import android.app.AlertDialog;
 import android.app.PictureInPictureParams;
 import android.content.pm.ActivityInfo;
-import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Base64;
 import android.util.Rational;
 import android.view.Gravity;
@@ -21,9 +18,7 @@ import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
-import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -75,52 +70,14 @@ public class MainActivity extends AppCompatActivity {
     private ScrollView inputScroll;
 
     private FrameLayout playerContainer;
-
-    // Custom Controls Elements
-    private FrameLayout customControlsOverlay;
-    private ProgressBar bufferingProgress;
-    private TextView btnPlayPause;
-    private TextView timeCurrent;
-    private TextView timeDuration;
-    private SeekBar customSeekBar;
+    private LinearLayout leftControls;
+    private LinearLayout rightControls;
 
     private EditText urlInput;
     private TextView statusText;
 
     private boolean fullscreen = false;
     private int resizeMode = 0;
-    private boolean isControlsVisible = true;
-    private boolean isUserSeeking = false;
-
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable autoHideRunnable = this::hideControls;
-
-    // Progress bar updater
-    private final Runnable updateProgressRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (player != null && !isUserSeeking) {
-                long current = player.getCurrentPosition();
-                long duration = player.getDuration();
-
-                if (duration > 0) {
-                    customSeekBar.setMax((int) duration);
-                    customSeekBar.setProgress((int) current);
-                    timeDuration.setText(formatTime(duration));
-                } else {
-                    timeDuration.setText("LIVE");
-                }
-                timeCurrent.setText(formatTime(current));
-
-                if (player.isPlaying()) {
-                    btnPlayPause.setText("❚❚");
-                } else {
-                    btnPlayPause.setText("▶");
-                }
-            }
-            handler.postDelayed(this, 500);
-        }
-    };
 
     private final int BG_COLOR = Color.rgb(9, 13, 22);
     private final int BUTTON_COLOR = Color.rgb(35, 48, 67);
@@ -149,8 +106,6 @@ public class MainActivity extends AppCompatActivity {
 
         buildScreen();
         initializePlayer();
-
-        handler.post(updateProgressRunnable);
 
         getOnBackPressedDispatcher().addCallback(
                 this,
@@ -195,12 +150,23 @@ public class MainActivity extends AppCompatActivity {
         playerContainer.setBackgroundColor(Color.BLACK);
 
         playerView = new PlayerView(this);
-        // Disable ExoPlayer's built-in default controller completely
-        playerView.setUseController(false);
+
+        playerView.setUseController(true);
+        playerView.setShowBuffering(
+                PlayerView.SHOW_BUFFERING_WHEN_PLAYING
+        );
+
+        playerView.setControllerShowTimeoutMs(3500);
+        playerView.setControllerHideOnTouch(true);
+
+        playerView.setShowNextButton(false);
+        playerView.setShowPreviousButton(false);
+        playerView.setShowSubtitleButton(false);
 
         playerView.setResizeMode(
                 AspectRatioFrameLayout.RESIZE_MODE_FIT
         );
+
         playerView.setBackgroundColor(Color.BLACK);
 
         playerContainer.addView(
@@ -208,26 +174,103 @@ public class MainActivity extends AppCompatActivity {
                 new FrameLayout.LayoutParams(-1, -1)
         );
 
-        // Buffering Indicator in center
-        bufferingProgress = new ProgressBar(this);
-        bufferingProgress.setIndeterminate(true);
-        bufferingProgress.setVisibility(View.GONE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            bufferingProgress.setIndeterminateTintList(
-                    ColorStateList.valueOf(Color.rgb(85, 194, 255))
-            );
-        }
+        // Left-side controls
+        leftControls = new LinearLayout(this);
+        leftControls.setOrientation(LinearLayout.VERTICAL);
+        leftControls.setGravity(Gravity.CENTER);
 
-        FrameLayout.LayoutParams bufferParams = new FrameLayout.LayoutParams(
-                dp(48), dp(48), Gravity.CENTER
+        addSideButton(
+                leftControls,
+                "CC",
+                "Subtitle",
+                () -> showTrackSelection(
+                        C.TRACK_TYPE_TEXT,
+                        "Subtitle Tracks"
+                )
         );
-        playerContainer.addView(bufferingProgress, bufferParams);
 
-        // Build Custom Controller Overlay
-        buildCustomControllerOverlay();
+        addSideButton(
+                leftControls,
+                "♫",
+                "Audio Track",
+                () -> showTrackSelection(
+                        C.TRACK_TYPE_AUDIO,
+                        "Audio Tracks"
+                )
+        );
 
-        // Clicking anywhere on playerView toggles controller visibility
-        playerView.setOnClickListener(v -> toggleControls());
+        FrameLayout.LayoutParams leftParams =
+                new FrameLayout.LayoutParams(
+                        dp(48),
+                        -2,
+                        Gravity.CENTER_VERTICAL | Gravity.START
+                );
+
+        leftParams.leftMargin = dp(5);
+
+        playerContainer.addView(leftControls, leftParams);
+
+        // Right-side controls
+        rightControls = new LinearLayout(this);
+        rightControls.setOrientation(LinearLayout.VERTICAL);
+        rightControls.setGravity(Gravity.CENTER);
+
+        addSideButton(
+                rightControls,
+                "↗",
+                "Resize",
+                this::cycleResizeMode
+        );
+
+        addSideButton(
+                rightControls,
+                "1×",
+                "Playback Speed",
+                this::showSpeedDialog
+        );
+
+        addSideButton(
+                rightControls,
+                "⛶",
+                "Fullscreen",
+                this::toggleFullscreen
+        );
+
+        addSideButton(
+                rightControls,
+                "▣",
+                "Picture in Picture",
+                this::enterPictureInPicture
+        );
+
+        FrameLayout.LayoutParams rightParams =
+                new FrameLayout.LayoutParams(
+                        dp(48),
+                        -2,
+                        Gravity.CENTER_VERTICAL | Gravity.END
+                );
+
+        rightParams.rightMargin = dp(5);
+
+        playerContainer.addView(rightControls, rightParams);
+
+        // Controller visibility listener
+        // Explicit interface cast fixes ambiguous method error.
+        playerView.setControllerVisibilityListener(
+                (PlayerView.ControllerVisibilityListener) visibility -> {
+
+                    if (leftControls != null && rightControls != null) {
+
+                        int sideVisibility =
+                                visibility == View.VISIBLE
+                                        ? View.VISIBLE
+                                        : View.GONE;
+
+                        leftControls.setVisibility(sideVisibility);
+                        rightControls.setVisibility(sideVisibility);
+                    }
+                }
+        );
 
         rootLayout.addView(
                 playerContainer,
@@ -304,319 +347,50 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // CUSTOM CONTROLLER OVERLAY & TIMELINE
+    // SIDE CONTROL BUTTONS
     // ==========================================
 
-    private void buildCustomControllerOverlay() {
-        customControlsOverlay = new FrameLayout(this);
-        customControlsOverlay.setLayoutParams(
-                new FrameLayout.LayoutParams(-1, -1)
-        );
-
-        // Clicking empty space on the overlay toggles hide/show
-        customControlsOverlay.setOnClickListener(v -> toggleControls());
-
-        // Bottom panel container with smooth dark gradient
-        LinearLayout bottomPanel = new LinearLayout(this);
-        bottomPanel.setOrientation(LinearLayout.VERTICAL);
-
-        GradientDrawable shadowGradient = new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{Color.TRANSPARENT, Color.argb(130, 0, 0, 0), Color.argb(220, 0, 0, 0)}
-        );
-        bottomPanel.setBackground(shadowGradient);
-        bottomPanel.setPadding(dp(14), dp(16), dp(14), dp(10));
-        bottomPanel.setClickable(true);
-        bottomPanel.setOnClickListener(v -> resetAutoHide());
-
-        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
-                -1, -2, Gravity.BOTTOM
-        );
-        customControlsOverlay.addView(bottomPanel, bottomParams);
-
-        // ------------------------------------------
-        // ROW 1: BUTTONS ROW (As shown in screenshot)
-        // ------------------------------------------
-        LinearLayout buttonsRow = new LinearLayout(this);
-        buttonsRow.setOrientation(LinearLayout.HORIZONTAL);
-        buttonsRow.setGravity(Gravity.CENTER);
-        buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
-
-        // 1. Aspect Ratio / Fit Toggle
-        addControllerButton(buttonsRow, "⛶", "Aspect Ratio", this::cycleResizeMode);
-
-        // 2. Audio Tracks
-        addControllerButton(buttonsRow, "♫", "Audio Track", () ->
-                showTrackSelection(C.TRACK_TYPE_AUDIO, "Audio Tracks")
-        );
-
-        // 3. PiP
-        addControllerButton(buttonsRow, "⧉", "PiP", this::enterPictureInPicture);
-
-        // 4. Rewind 10s
-        addControllerButton(buttonsRow, "◀◀", "Rewind 10s", () -> {
-            if (player != null) {
-                long pos = Math.max(0, player.getCurrentPosition() - 10000);
-                player.seekTo(pos);
-                updateSeekViews(pos);
-                resetAutoHide();
-            }
-        });
-
-        // 5. Play / Pause Button (slightly larger)
-        btnPlayPause = addControllerButton(buttonsRow, "▶", "Play/Pause", () -> {
-            if (player != null) {
-                if (player.isPlaying()) {
-                    player.pause();
-                    btnPlayPause.setText("▶");
-                } else {
-                    player.play();
-                    btnPlayPause.setText("❚❚");
-                }
-                resetAutoHide();
-            }
-        });
-        btnPlayPause.setTextSize(20);
-
-        // 6. Forward 10s
-        addControllerButton(buttonsRow, "▶▶", "Forward 10s", () -> {
-            if (player != null) {
-                long dur = player.getDuration();
-                long pos = player.getCurrentPosition() + 10000;
-                if (dur > 0 && pos > dur) pos = dur;
-                player.seekTo(pos);
-                updateSeekViews(pos);
-                resetAutoHide();
-            }
-        });
-
-        // 7. Subtitles
-        addControllerButton(buttonsRow, "CC", "Subtitles", () ->
-                showTrackSelection(C.TRACK_TYPE_TEXT, "Subtitle Tracks")
-        );
-
-        // 8. Settings Menu (Quality / Tracks / Speeds)
-        addControllerButton(buttonsRow, "⚙", "Settings", this::showSettingsDialog);
-
-        // 9. Fullscreen Toggle
-        addControllerButton(buttonsRow, "⊞", "Fullscreen", this::toggleFullscreen);
-
-        bottomPanel.addView(buttonsRow);
-
-        // ------------------------------------------
-        // ROW 2: TIMELINE / PROGRESS BAR ROW
-        // ------------------------------------------
-        LinearLayout timelineRow = new LinearLayout(this);
-        timelineRow.setOrientation(LinearLayout.HORIZONTAL);
-        timelineRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams timelineParams =
-                new LinearLayout.LayoutParams(-1, -2);
-        timelineParams.topMargin = dp(6);
-        timelineRow.setLayoutParams(timelineParams);
-
-        // Current Time TextView
-        timeCurrent = new TextView(this);
-        timeCurrent.setText("00:00");
-        timeCurrent.setTextColor(Color.WHITE);
-        timeCurrent.setTextSize(13);
-        timeCurrent.setTypeface(null, android.graphics.Typeface.BOLD);
-        timeCurrent.setPadding(0, 0, dp(4), 0);
-        timelineRow.addView(timeCurrent);
-
-        // Custom SeekBar
-        customSeekBar = new SeekBar(this);
-        customSeekBar.setMax(1000);
-        customSeekBar.setPadding(dp(8), dp(4), dp(8), dp(4));
-
-        // White circular thumb
-        GradientDrawable thumb = new GradientDrawable();
-        thumb.setShape(GradientDrawable.OVAL);
-        thumb.setColor(Color.WHITE);
-        thumb.setSize(dp(14), dp(14));
-        customSeekBar.setThumb(thumb);
-        customSeekBar.setThumbOffset(dp(7));
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            customSeekBar.setProgressTintList(ColorStateList.valueOf(Color.WHITE));
-            customSeekBar.setProgressBackgroundTintList(
-                    ColorStateList.valueOf(Color.argb(90, 255, 255, 255))
-            );
-            customSeekBar.setSecondaryProgressTintList(
-                    ColorStateList.valueOf(Color.argb(140, 255, 255, 255))
-            );
-        }
-
-        LinearLayout.LayoutParams seekParams =
-                new LinearLayout.LayoutParams(0, -2, 1.0f);
-        seekParams.leftMargin = dp(4);
-        seekParams.rightMargin = dp(4);
-        timelineRow.addView(customSeekBar, seekParams);
-
-        customSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (fromUser) {
-                    timeCurrent.setText(formatTime(progress));
-                    resetAutoHide();
-                }
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-                isUserSeeking = true;
-                handler.removeCallbacks(autoHideRunnable);
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-                if (player != null) {
-                    player.seekTo(seekBar.getProgress());
-                }
-                isUserSeeking = false;
-                resetAutoHide();
-            }
-        });
-
-        // Duration TextView
-        timeDuration = new TextView(this);
-        timeDuration.setText("00:00");
-        timeDuration.setTextColor(Color.WHITE);
-        timeDuration.setTextSize(13);
-        timeDuration.setTypeface(null, android.graphics.Typeface.BOLD);
-        timeDuration.setPadding(dp(4), 0, 0, 0);
-        timelineRow.addView(timeDuration);
-
-        bottomPanel.addView(timelineRow);
-
-        playerContainer.addView(customControlsOverlay);
-        resetAutoHide();
-    }
-
-    private TextView addControllerButton(
+    private void addSideButton(
             LinearLayout parent,
             String symbol,
             String description,
             Runnable action
     ) {
+
         TextView button = new TextView(this);
+
         button.setText(symbol);
         button.setTextColor(Color.WHITE);
-        button.setTextSize(17);
+        button.setTextSize(19);
         button.setGravity(Gravity.CENTER);
         button.setContentDescription(description);
         button.setFocusable(true);
         button.setClickable(true);
 
         GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.argb(160, 32, 44, 60));
-        background.setCornerRadius(dp(8));
+        background.setColor(Color.argb(185, 35, 48, 67));
+        background.setCornerRadius(dp(12));
+
         button.setBackground(background);
 
         LinearLayout.LayoutParams params =
-                new LinearLayout.LayoutParams(dp(38), dp(36));
-        params.leftMargin = dp(3);
-        params.rightMargin = dp(3);
+                new LinearLayout.LayoutParams(
+                        dp(40),
+                        dp(40)
+                );
+
+        params.topMargin = dp(3);
+        params.bottomMargin = dp(3);
 
         parent.addView(button, params);
 
         button.setOnClickListener(v -> {
             action.run();
-            resetAutoHide();
+
+            if (playerView != null && !isInPipMode()) {
+                playerView.showController();
+            }
         });
-
-        return button;
-    }
-
-    private void updateSeekViews(long pos) {
-        if (customSeekBar != null) {
-            customSeekBar.setProgress((int) pos);
-        }
-        if (timeCurrent != null) {
-            timeCurrent.setText(formatTime(pos));
-        }
-    }
-
-    private String formatTime(long millis) {
-        if (millis <= 0) return "00:00";
-        long totalSeconds = millis / 1000;
-        long seconds = totalSeconds % 60;
-        long minutes = (totalSeconds / 60) % 60;
-        long hours = totalSeconds / 3600;
-
-        if (hours > 0) {
-            return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds);
-        } else {
-            return String.format(Locale.US, "%02d:%02d", minutes, seconds);
-        }
-    }
-
-    private void toggleControls() {
-        if (isInPipMode()) return;
-
-        if (isControlsVisible) {
-            hideControls();
-        } else {
-            showControls();
-        }
-    }
-
-    private void showControls() {
-        if (customControlsOverlay != null) {
-            customControlsOverlay.setVisibility(View.VISIBLE);
-            isControlsVisible = true;
-            resetAutoHide();
-        }
-    }
-
-    private void hideControls() {
-        if (isUserSeeking || isInPipMode()) return;
-
-        if (customControlsOverlay != null) {
-            customControlsOverlay.setVisibility(View.GONE);
-            isControlsVisible = false;
-        }
-    }
-
-    private void resetAutoHide() {
-        handler.removeCallbacks(autoHideRunnable);
-        if (isControlsVisible) {
-            handler.postDelayed(autoHideRunnable, 4000);
-        }
-    }
-
-    private void showSettingsDialog() {
-        if (player == null) return;
-
-        String[] options = {
-                "Video Quality / Tracks",
-                "Audio Tracks",
-                "Subtitle Tracks",
-                "Playback Speed",
-                "Aspect Ratio (Fit / Fill / Zoom)"
-        };
-
-        new AlertDialog.Builder(this)
-                .setTitle("Settings")
-                .setItems(options, (dialog, which) -> {
-                    switch (which) {
-                        case 0:
-                            showTrackSelection(C.TRACK_TYPE_VIDEO, "Video Quality");
-                            break;
-                        case 1:
-                            showTrackSelection(C.TRACK_TYPE_AUDIO, "Audio Tracks");
-                            break;
-                        case 2:
-                            showTrackSelection(C.TRACK_TYPE_TEXT, "Subtitle Tracks");
-                            break;
-                        case 3:
-                            showSpeedDialog();
-                            break;
-                        case 4:
-                            cycleResizeMode();
-                            break;
-                    }
-                })
-                .show();
     }
 
     private TextView makeActionButton(
@@ -787,39 +561,18 @@ public class MainActivity extends AppCompatActivity {
 
                     if (state == Player.STATE_BUFFERING) {
                         setStatus("Buffering...");
-                        if (bufferingProgress != null) {
-                            bufferingProgress.setVisibility(View.VISIBLE);
-                        }
                     } else if (state == Player.STATE_READY) {
                         setStatus("Playing / Ready");
-                        if (bufferingProgress != null) {
-                            bufferingProgress.setVisibility(View.GONE);
-                        }
                     } else if (state == Player.STATE_ENDED) {
                         setStatus("Playback ended");
-                        if (bufferingProgress != null) {
-                            bufferingProgress.setVisibility(View.GONE);
-                        }
                     } else if (state == Player.STATE_IDLE) {
                         setStatus("Ready");
-                        if (bufferingProgress != null) {
-                            bufferingProgress.setVisibility(View.GONE);
-                        }
-                    }
-                }
-
-                @Override
-                public void onIsPlayingChanged(boolean isPlaying) {
-                    if (btnPlayPause != null) {
-                        btnPlayPause.setText(isPlaying ? "❚❚" : "▶");
                     }
                 }
 
                 @Override
                 public void onPlayerError(PlaybackException error) {
-                    if (bufferingProgress != null) {
-                        bufferingProgress.setVisibility(View.GONE);
-                    }
+
                     setStatus(
                             "Playback error: "
                                     + error.getErrorCodeName()
@@ -1128,7 +881,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // AUDIO / SUBTITLE / VIDEO TRACK SELECTION
+    // AUDIO / SUBTITLE TRACK SELECTION
     // ==========================================
 
     private void showTrackSelection(
@@ -1257,10 +1010,6 @@ public class MainActivity extends AppCompatActivity {
             }
 
             name.append(" • ").append(channels);
-        }
-
-        if (format.width > 0 && format.height > 0) {
-            name.append(" • ").append(format.width).append("x").append(format.height);
         }
 
         return name.toString();
@@ -1504,9 +1253,8 @@ public class MainActivity extends AppCompatActivity {
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
 
-            if (customControlsOverlay != null) {
-                customControlsOverlay.setVisibility(View.GONE);
-            }
+            leftControls.setVisibility(View.GONE);
+            rightControls.setVisibility(View.GONE);
 
             playerContainer.setLayoutParams(
                     new LinearLayout.LayoutParams(
@@ -1532,8 +1280,11 @@ public class MainActivity extends AppCompatActivity {
                 );
             }
 
-            if (customControlsOverlay != null) {
-                showControls();
+            if (playerView != null
+                    && playerView.isControllerFullyVisible()) {
+
+                leftControls.setVisibility(View.VISIBLE);
+                rightControls.setVisibility(View.VISIBLE);
             }
         }
     }
@@ -1583,8 +1334,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
 
         super.onDestroy();
-
-        handler.removeCallbacksAndMessages(null);
 
         if (player != null) {
 
