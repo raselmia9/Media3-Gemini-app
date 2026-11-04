@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -16,6 +17,7 @@ import android.util.Base64;
 import android.util.Rational;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -92,11 +94,6 @@ public class MainActivity extends AppCompatActivity {
     private SeekBar customSeekBar;
     private TextView fullscreenButton;
 
-    // Lock Overlay
-    private FrameLayout lockOverlay;
-    private TextView unlockButton;
-    private boolean controlsLocked = false;
-
     private EditText urlInput;
     private TextView statusText;
 
@@ -171,9 +168,7 @@ public class MainActivity extends AppCompatActivity {
                 new OnBackPressedCallback(true) {
                     @Override
                     public void handleOnBackPressed() {
-                        if (controlsLocked) {
-                            setControlsLocked(false);
-                        } else if (fullscreen) {
+                        if (fullscreen) {
                             toggleFullscreen();
                         } else {
                             finish();
@@ -206,12 +201,16 @@ public class MainActivity extends AppCompatActivity {
         // Player Container
         playerContainer = new FrameLayout(this);
         playerContainer.setBackgroundColor(Color.BLACK);
+        playerContainer.setClickable(true);
+        playerContainer.setOnClickListener(v -> toggleControls());
 
         playerView = new PlayerView(this);
         // Disable ExoPlayer default built-in controls completely
         playerView.setUseController(false);
         playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
         playerView.setBackgroundColor(Color.BLACK);
+        playerView.setClickable(true);
+        playerView.setOnClickListener(v -> toggleControls());
         playerContainer.addView(playerView, new FrameLayout.LayoutParams(-1, -1));
 
         // Buffering Indicator in center
@@ -231,10 +230,6 @@ public class MainActivity extends AppCompatActivity {
         // Custom Controller Overlay
         buildCustomControls();
         playerContainer.addView(customControlsOverlay, new FrameLayout.LayoutParams(-1, -1));
-
-        // Lock Overlay (When locked, covers video to prevent touch and shows unlock button)
-        buildLockOverlay();
-        playerContainer.addView(lockOverlay, new FrameLayout.LayoutParams(-1, -1));
 
         rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.30f));
 
@@ -317,6 +312,7 @@ public class MainActivity extends AppCompatActivity {
     private void buildCustomControls() {
         customControlsOverlay = new FrameLayout(this);
         customControlsOverlay.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+        customControlsOverlay.setClickable(true);
 
         // Tapping empty overlay area toggles show/hide
         customControlsOverlay.setOnClickListener(v -> toggleControls());
@@ -346,8 +342,8 @@ public class MainActivity extends AppCompatActivity {
         buttonsRow.setGravity(Gravity.CENTER);
         buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
 
-        // 1. Lock icon
-        addControllerButton(buttonsRow, "🔒", "Lock controls", () -> setControlsLocked(true));
+        // 1. Picture in Picture (PiP) Mode Icon
+        addControllerButton(buttonsRow, "▣", "Picture in Picture", this::enterPictureInPicture);
 
         // 2. Rewind 10s
         addControllerButton(buttonsRow, "◀◀", "Rewind 10s", this::rewind10s);
@@ -359,13 +355,10 @@ public class MainActivity extends AppCompatActivity {
         // 4. Forward 10s
         addControllerButton(buttonsRow, "▶▶", "Forward 10s", this::forward10s);
 
-        // 5. PiP icon
-        addControllerButton(buttonsRow, "▣", "Picture in Picture", this::enterPictureInPicture);
-
-        // 6. Settings (Gear) icon: Audio, Subtitle, Video tracks, Resize, Speed
+        // 5. Settings (Gear) icon: Audio, Subtitle, Video tracks, Resize, Speed
         addControllerButton(buttonsRow, "⚙", "Settings", this::showPlayerSettings);
 
-        // 7. Fullscreen Toggle (Enter ⤢ / Exit ⤡)
+        // 6. Fullscreen Toggle (Enter ⤢ / Exit ⤡)
         fullscreenButton = addControllerButton(buttonsRow, "⤢", "Enter fullscreen", this::toggleFullscreen);
 
         bottomPanel.addView(buttonsRow);
@@ -433,32 +426,6 @@ public class MainActivity extends AppCompatActivity {
         bottomPanel.addView(timelineRow);
     }
 
-    private void buildLockOverlay() {
-        lockOverlay = new FrameLayout(this);
-        lockOverlay.setBackgroundColor(Color.TRANSPARENT);
-        lockOverlay.setVisibility(View.GONE);
-        lockOverlay.setClickable(true);
-        lockOverlay.setOnTouchListener((v, event) -> true);
-
-        unlockButton = new TextView(this);
-        unlockButton.setText("🔓");
-        unlockButton.setTextColor(Color.WHITE);
-        unlockButton.setTextSize(22);
-        unlockButton.setGravity(Gravity.CENTER);
-        unlockButton.setContentDescription("Unlock player controls");
-        GradientDrawable unlockBg = new GradientDrawable();
-        unlockBg.setColor(Color.argb(215, 35, 48, 67));
-        unlockBg.setCornerRadius(dp(14));
-        unlockButton.setBackground(unlockBg);
-
-        FrameLayout.LayoutParams unlockParams = new FrameLayout.LayoutParams(
-                dp(48), dp(48), Gravity.CENTER_VERTICAL | Gravity.END
-        );
-        unlockParams.rightMargin = dp(12);
-        lockOverlay.addView(unlockButton, unlockParams);
-        unlockButton.setOnClickListener(v -> setControlsLocked(false));
-    }
-
     private TextView addControllerButton(
             LinearLayout parent,
             String symbol,
@@ -479,9 +446,9 @@ public class MainActivity extends AppCompatActivity {
         bg.setCornerRadius(dp(12));
         button.setBackground(bg);
 
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(40));
-        params.leftMargin = dp(4);
-        params.rightMargin = dp(4);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(40));
+        params.leftMargin = dp(5);
+        params.rightMargin = dp(5);
         parent.addView(button, params);
 
         button.setOnClickListener(v -> {
@@ -492,20 +459,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showControls() {
-        if (controlsLocked || isInPipMode()) return;
-        customControlsOverlay.setVisibility(View.VISIBLE);
+        if (isInPipMode()) return;
+        bottomPanel.setVisibility(View.VISIBLE);
         isControlsVisible = true;
         resetAutoHide();
     }
 
     private void hideControls() {
         if (isUserSeeking || isInPipMode()) return;
-        customControlsOverlay.setVisibility(View.GONE);
+        bottomPanel.setVisibility(View.GONE);
         isControlsVisible = false;
     }
 
     private void toggleControls() {
-        if (controlsLocked || isInPipMode()) return;
+        if (isInPipMode()) return;
         if (isControlsVisible) {
             hideControls();
         } else {
@@ -515,21 +482,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void resetAutoHide() {
         handler.removeCallbacks(autoHideRunnable);
-        if (isControlsVisible && !controlsLocked && !isInPipMode()) {
+        if (isControlsVisible && !isInPipMode()) {
             handler.postDelayed(autoHideRunnable, 4000);
-        }
-    }
-
-    private void setControlsLocked(boolean locked) {
-        controlsLocked = locked;
-        if (locked) {
-            hideControls();
-            if (lockOverlay != null) lockOverlay.setVisibility(View.VISIBLE);
-            setStatus("Controls locked");
-        } else {
-            if (lockOverlay != null) lockOverlay.setVisibility(View.GONE);
-            showControls();
-            setStatus("Controls unlocked");
         }
     }
 
@@ -1253,7 +1207,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // PICTURE IN PICTURE (RELIABLE & CLEAN)
+    // PICTURE IN PICTURE (VIDEO LAYOUT ONLY)
     // ==========================================
 
     private boolean isInPipMode() {
@@ -1272,71 +1226,81 @@ public class MainActivity extends AppCompatActivity {
         try {
             wasFullscreenBeforePip = fullscreen;
 
-            // Reset orientation lock if in landscape so window manager does not hang in PiP
+            // Reset orientation lock so window manager transitions cleanly into PiP
             if (fullscreen) {
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
             }
 
-            // Calculate clean aspect ratio from playing video
-            Rational aspectRatio = new Rational(16, 9);
-            if (player != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
-                int vw = player.getVideoSize().width;
-                int vh = player.getVideoSize().height;
-                float r = (float) vw / (float) vh;
-                if (r >= 0.42f && r <= 2.39f) {
-                    aspectRatio = new Rational(vw, vh);
-                }
-            }
-
-            PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
-                    .setAspectRatio(aspectRatio);
-
-            // Hide non-player UI BEFORE entering PiP so the captured snapshot is strictly the video
+            // Immediately isolate ONLY the player layout on screen
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-            if (customControlsOverlay != null) customControlsOverlay.setVisibility(View.GONE);
-            if (lockOverlay != null) lockOverlay.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
+            bottomPanel.setVisibility(View.GONE);
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-            enterPictureInPictureMode(builder.build());
+            // Run after the view layout pass completes so the PiP snapshot captures ONLY the video
+            playerContainer.post(() -> {
+                try {
+                    Rational aspectRatio = new Rational(16, 9);
+                    if (player != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
+                        int vw = player.getVideoSize().width;
+                        int vh = player.getVideoSize().height;
+                        float r = (float) vw / (float) vh;
+                        if (r >= 0.42f && r <= 2.39f) {
+                            aspectRatio = new Rational(vw, vh);
+                        }
+                    }
+
+                    PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                            .setAspectRatio(aspectRatio);
+
+                    Rect sourceRect = new Rect();
+                    playerView.getGlobalVisibleRect(sourceRect);
+                    if (!sourceRect.isEmpty()) {
+                        builder.setSourceRectHint(sourceRect);
+                    }
+
+                    enterPictureInPictureMode(builder.build());
+                } catch (Exception e) {
+                    restoreLayoutFromPip();
+                    toast("PiP error: " + e.getMessage());
+                }
+            });
+
         } catch (Exception e) {
-            if (!wasFullscreenBeforePip) {
-                titleBar.setVisibility(View.VISIBLE);
-                inputScroll.setVisibility(View.VISIBLE);
-                playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
-            }
+            restoreLayoutFromPip();
             toast("PiP error: " + e.getMessage());
         }
+    }
+
+    private void restoreLayoutFromPip() {
+        fullscreen = wasFullscreenBeforePip;
+        if (fullscreen) {
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            titleBar.setVisibility(View.GONE);
+            inputScroll.setVisibility(View.GONE);
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
+        } else {
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            titleBar.setVisibility(View.VISIBLE);
+            inputScroll.setVisibility(View.VISIBLE);
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
+        }
+        showControls();
+        updateFullscreenButton();
     }
 
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
         if (isInPictureInPictureMode) {
+            // Keep strictly video container visible in PiP
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-            if (customControlsOverlay != null) customControlsOverlay.setVisibility(View.GONE);
-            if (lockOverlay != null) lockOverlay.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
+            bottomPanel.setVisibility(View.GONE);
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         } else {
-            fullscreen = wasFullscreenBeforePip;
-            if (fullscreen) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-                titleBar.setVisibility(View.GONE);
-                inputScroll.setVisibility(View.GONE);
-                playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
-            } else {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-                titleBar.setVisibility(View.VISIBLE);
-                inputScroll.setVisibility(View.VISIBLE);
-                playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
-            }
-            if (controlsLocked) {
-                if (lockOverlay != null) lockOverlay.setVisibility(View.VISIBLE);
-            } else {
-                showControls();
-            }
-            updateFullscreenButton();
+            // Restored from PiP
+            restoreLayoutFromPip();
         }
     }
 
