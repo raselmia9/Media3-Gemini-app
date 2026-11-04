@@ -762,9 +762,9 @@ public class MainActivity extends AppCompatActivity {
 
             if (keyIdHex != null && keyHex != null && !keyIdHex.isEmpty() && !keyHex.isEmpty()) {
 
-                String response = "{"keys":[{"kty":"oct","k":""
-                        + base64Url(hexToBytes(keyHex)) + "","kid":""
-                        + base64Url(hexToBytes(keyIdHex)) + ""}],"type":"temporary"}";
+                String response = "{\"keys\":[{\"kty\":\"oct\",\"k\":\""
+                        + base64Url(hexToBytes(keyHex)) + "\",\"kid\":\""
+                        + base64Url(hexToBytes(keyIdHex)) + "\"}],\"type\":\"temporary\"}";
 
                 LocalMediaDrmCallback drmCallback =
                         new LocalMediaDrmCallback(response.getBytes(StandardCharsets.UTF_8));
@@ -1491,8 +1491,7 @@ public class MainActivity extends AppCompatActivity {
                 StringBuilder htmlBuilder = new StringBuilder();
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    htmlBuilder.append(line).append("
-");
+                    htmlBuilder.append(line).append("\n");
                 }
                 reader.close();
 
@@ -1512,61 +1511,38 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String patchHtmlForViewportAndBridge(String html) {
-        String bridgeHook = "<script>
-" +
-                "(function(){
-" +
-                "  function sendToAndroid(val){
-" +
-                "    if(window.AndroidBridge && window.AndroidBridge.postMessage) window.AndroidBridge.postMessage(val);
-" +
-                "    if(window.CustomWebView && window.CustomWebView.setWebViewString) window.CustomWebView.setWebViewString(val);
-" +
-                "  }
-" +
-                "  window.sendData = function(url){ sendToAndroid(url); };
-" +
-                "  window.setWebViewString = function(url){ sendToAndroid(url); };
-" +
-                "})();
-" +
-                "</script>
-";
+        String bridgeHook = "<script>\n" +
+                "(function(){\n" +
+                "  function sendToAndroid(val){\n" +
+                "    if(window.AndroidBridge && window.AndroidBridge.postMessage) window.AndroidBridge.postMessage(val);\n" +
+                "    if(window.CustomWebView && window.CustomWebView.setWebViewString) window.CustomWebView.setWebViewString(val);\n" +
+                "  }\n" +
+                "  window.sendData = function(url){ sendToAndroid(url); };\n" +
+                "  window.setWebViewString = function(url){ sendToAndroid(url); };\n" +
+                "})();\n" +
+                "</script>\n";
 
-        String metaTag = "<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">";
+        String metaTag = "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">";
         String styleZeroMargin = "<style>html, body { margin: 0; padding: 0; width: 100%; box-sizing: border-box; } * { box-sizing: border-box; }</style>";
 
         if (html.contains("<head>")) {
-            return html.replace("<head>", "<head>
-" + metaTag + "
-" + styleZeroMargin + "
-" + bridgeHook);
+            return html.replace("<head>", "<head>\n" + metaTag + "\n" + styleZeroMargin + "\n" + bridgeHook);
         } else {
             return metaTag + styleZeroMargin + bridgeHook + html;
         }
     }
 
     private void injectBridgeShim() {
-        String js = "javascript:(function(){
-" +
-                "  function forward(v){
-" +
-                "    if(window.AndroidBridge && window.AndroidBridge.postMessage) window.AndroidBridge.postMessage(v);
-" +
-                "    if(window.CustomWebView && window.CustomWebView.setWebViewString) window.CustomWebView.setWebViewString(v);
-" +
-                "  }
-" +
-                "  var oldSendData = window.sendData;
-" +
-                "  window.sendData = function(val){
-" +
-                "    forward(val);
-" +
-                "    if(typeof oldSendData === 'function') { try{ oldSendData(val); }catch(e){} }
-" +
-                "  };
-" +
+        String js = "javascript:(function(){\n" +
+                "  function forward(v){\n" +
+                "    if(window.AndroidBridge && window.AndroidBridge.postMessage) window.AndroidBridge.postMessage(v);\n" +
+                "    if(window.CustomWebView && window.CustomWebView.setWebViewString) window.CustomWebView.setWebViewString(v);\n" +
+                "  }\n" +
+                "  var oldSendData = window.sendData;\n" +
+                "  window.sendData = function(val){\n" +
+                "    forward(val);\n" +
+                "    if(typeof oldSendData === 'function') { try{ oldSendData(val); }catch(e){} }\n" +
+                "  };\n" +
                 "})();";
         webView.evaluateJavascript(js, null);
     }
