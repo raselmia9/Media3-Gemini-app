@@ -1,5 +1,8 @@
 package com.raselahomed467.advancedmedia3player;
 
+import android.content.Context;
+import android.graphics.Typeface;
+
 import android.provider.Settings;
 import android.media.AudioManager;
 import android.view.MotionEvent;
