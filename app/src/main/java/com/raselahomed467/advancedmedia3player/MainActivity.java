@@ -1,5 +1,10 @@
 package com.raselahomed467.advancedmedia3player;
 
+import android.provider.Settings;
+import android.media.AudioManager;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
+import android.view.GestureDetector;
 import android.app.AlertDialog;
 import android.app.PictureInPictureParams;
 import android.content.pm.ActivityInfo;
@@ -92,6 +97,36 @@ public class MainActivity extends AppCompatActivity {
     private TextView timeDuration;
     private ProgressBar bufferingProgress;
 
+    // Gesture detection & Center HUD
+    private GestureDetector gestureDetector;
+    private ScaleGestureDetector scaleGestureDetector;
+    private float currentVideoScale = 1.0f;
+    private FrameLayout gestureHudCard;
+    private TextView gestureHudIcon;
+    private TextView gestureHudText;
+    private ProgressBar gestureHudProgress;
+    private final Handler gestureHudHandler = new Handler(Looper.getMainLooper());
+    private final Runnable hideGestureHudRunnable = () -> {
+        if (gestureHudCard != null) {
+            gestureHudCard.animate()
+                    .alpha(0f)
+                    .setDuration(220)
+                    .withEndAction(() -> {
+                        gestureHudCard.setVisibility(View.GONE);
+                        gestureHudCard.setAlpha(1f);
+                    })
+                    .start();
+        }
+    };
+
+    // Tracking swipe for Volume & Brightness
+    private boolean isSwipeGestureActive = false;
+    private boolean isSwipeVolume = false;
+    private float swipeStartY = 0f;
+    private float swipeStartX = 0f;
+    private int initialVolume = 0;
+    private float initialBrightness = 0.5f;
+
     private EditText urlInput;
     private TextView statusText;
 
@@ -161,6 +196,7 @@ public class MainActivity extends AppCompatActivity {
                 WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         );
 
+        initGestureDetectors();
         buildScreen();
         initializePlayer();
 
@@ -233,6 +269,10 @@ public class MainActivity extends AppCompatActivity {
         // Custom Controller Overlay
         buildCustomControls();
         playerContainer.addView(customControlsOverlay, new FrameLayout.LayoutParams(-1, -1));
+
+        // Center Gesture Notification HUD
+        buildGestureHud();
+        playerContainer.addView(gestureHudCard, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
 
         rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.30f));
 
@@ -327,9 +367,10 @@ public class MainActivity extends AppCompatActivity {
         customControlsOverlay = new FrameLayout(this);
         customControlsOverlay.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
         customControlsOverlay.setClickable(true);
+        customControlsOverlay.setFocusable(true);
 
-        // Tapping empty overlay area toggles show/hide
-        customControlsOverlay.setOnClickListener(v -> toggleControls());
+        // Setup gestures (Single-tap, Double-tap seek, Swipe Volume/Brightness, Two-finger Zoom)
+        setupOverlayGestures();
 
         bottomPanel = new LinearLayout(this);
         bottomPanel.setOrientation(LinearLayout.VERTICAL);
@@ -470,6 +511,250 @@ public class MainActivity extends AppCompatActivity {
             resetAutoHide();
         });
         return button;
+    }
+
+    // ==========================================
+    // GESTURE & HUD NOTIFICATION SYSTEM
+    // ==========================================
+
+    private void buildGestureHud() {
+        gestureHudCard = new FrameLayout(this);
+        gestureHudCard.setVisibility(View.GONE);
+
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setShape(GradientDrawable.RECTANGLE);
+        cardBg.setColor(Color.argb(220, 18, 22, 28));
+        cardBg.setCornerRadius(dp(16));
+        cardBg.setStroke(dp(1), Color.argb(60, 255, 255, 255));
+        gestureHudCard.setBackground(cardBg);
+        gestureHudCard.setPadding(dp(20), dp(14), dp(20), dp(14));
+
+        LinearLayout contentLayout = new LinearLayout(this);
+        contentLayout.setOrientation(LinearLayout.VERTICAL);
+        contentLayout.setGravity(Gravity.CENTER);
+
+        gestureHudIcon = new TextView(this);
+        gestureHudIcon.setTextSize(28);
+        gestureHudIcon.setTextColor(Color.WHITE);
+        gestureHudIcon.setGravity(Gravity.CENTER);
+        contentLayout.addView(gestureHudIcon, new LinearLayout.LayoutParams(-2, -2));
+
+        gestureHudText = new TextView(this);
+        gestureHudText.setTextSize(14);
+        gestureHudText.setTextColor(Color.WHITE);
+        gestureHudText.setTypeface(null, android.graphics.Typeface.BOLD);
+        gestureHudText.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(-2, -2);
+        textParams.topMargin = dp(4);
+        contentLayout.addView(gestureHudText, textParams);
+
+        gestureHudProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        gestureHudProgress.setMax(100);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(110), dp(6));
+        progressParams.topMargin = dp(8);
+        gestureHudProgress.setLayoutParams(progressParams);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            gestureHudProgress.setProgressTintList(ColorStateList.valueOf(Color.rgb(85, 194, 255)));
+            gestureHudProgress.setProgressBackgroundTintList(ColorStateList.valueOf(Color.argb(80, 255, 255, 255)));
+        }
+        contentLayout.addView(gestureHudProgress);
+
+        gestureHudCard.addView(contentLayout, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+    }
+
+    private void showGestureHud(String icon, String text, int progress) {
+        if (gestureHudCard == null || isInPipMode()) return;
+        gestureHudHandler.removeCallbacks(hideGestureHudRunnable);
+        gestureHudIcon.setText(icon);
+        gestureHudText.setText(text);
+        if (progress >= 0) {
+            gestureHudProgress.setVisibility(View.VISIBLE);
+            gestureHudProgress.setProgress(Math.max(0, Math.min(100, progress)));
+        } else {
+            gestureHudProgress.setVisibility(View.GONE);
+        }
+        gestureHudCard.setAlpha(1f);
+        gestureHudCard.setVisibility(View.VISIBLE);
+        gestureHudHandler.postDelayed(hideGestureHudRunnable, 1200);
+    }
+
+    private void fastForward15s() {
+        if (player == null) return;
+        long dur = player.getDuration();
+        long pos = player.getCurrentPosition() + 15000;
+        if (dur > 0 && pos > dur) pos = dur;
+        player.seekTo(pos);
+        updateSeekViews(pos);
+        showGestureHud("⏩", "+15s Forward", -1);
+    }
+
+    private void rewind15s() {
+        if (player == null) return;
+        long pos = Math.max(0, player.getCurrentPosition() - 15000);
+        player.seekTo(pos);
+        updateSeekViews(pos);
+        showGestureHud("⏪", "-15s Rewind", -1);
+    }
+
+    private void initGestureDetectors() {
+        gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDown(MotionEvent e) {
+                return true;
+            }
+
+            @Override
+            public boolean onSingleTapConfirmed(MotionEvent e) {
+                toggleControls();
+                return true;
+            }
+
+            @Override
+            public boolean onDoubleTap(MotionEvent e) {
+                if (customControlsOverlay == null || customControlsOverlay.getWidth() == 0) {
+                    return false;
+                }
+                float x = e.getX();
+                float halfWidth = customControlsOverlay.getWidth() / 2f;
+
+                if (x > halfWidth) {
+                    fastForward15s();
+                } else {
+                    rewind15s();
+                }
+                return true;
+            }
+        });
+
+        scaleGestureDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScale(ScaleGestureDetector detector) {
+                float factor = detector.getScaleFactor();
+                currentVideoScale *= factor;
+                // Pinch to Zoom between 1.0f (fit) and 4.0f (zoomed)
+                currentVideoScale = Math.max(1.0f, Math.min(currentVideoScale, 4.0f));
+
+                if (playerView != null) {
+                    playerView.setScaleX(currentVideoScale);
+                    playerView.setScaleY(currentVideoScale);
+                }
+
+                int percent = Math.round(currentVideoScale * 100);
+                showGestureHud("🔍", percent + "% Zoom", -1);
+                return true;
+            }
+
+            @Override
+            public void onScaleEnd(ScaleGestureDetector detector) {
+                // If user pinches back to normal size, smoothly snap to 1.0
+                if (currentVideoScale <= 1.08f) {
+                    currentVideoScale = 1.0f;
+                    if (playerView != null) {
+                        playerView.setScaleX(1.0f);
+                        playerView.setScaleY(1.0f);
+                        playerView.setTranslationX(0);
+                        playerView.setTranslationY(0);
+                    }
+                    showGestureHud("🔍", "Fit to Screen", -1);
+                }
+            }
+        });
+    }
+
+    private void setupOverlayGestures() {
+        customControlsOverlay.setOnTouchListener((v, event) -> {
+            if (isInPipMode()) return false;
+
+            // Two-finger Pinch to Zoom
+            if (event.getPointerCount() >= 2) {
+                isSwipeGestureActive = false;
+                return scaleGestureDetector.onTouchEvent(event);
+            }
+
+            // Detect Single Tap and Double Tap (+15s / -15s)
+            boolean gestureHandled = gestureDetector.onTouchEvent(event);
+
+            // Single finger swipe for Volume (Right half) and Brightness (Left half)
+            int action = event.getActionMasked();
+            float x = event.getX();
+            float y = event.getY();
+            float viewHeight = v.getHeight() > 0 ? (float) v.getHeight() : dp(220);
+
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                    swipeStartX = x;
+                    swipeStartY = y;
+                    isSwipeGestureActive = false;
+                    isSwipeVolume = (x > v.getWidth() / 2f);
+
+                    if (isSwipeVolume) {
+                        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                        if (am != null) {
+                            initialVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+                        }
+                    } else {
+                        WindowManager.LayoutParams lp = getWindow().getAttributes();
+                        initialBrightness = lp.screenBrightness;
+                        if (initialBrightness < 0) {
+                            try {
+                                int sys = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS);
+                                initialBrightness = sys / 255.0f;
+                            } catch (Exception ignored) {
+                                initialBrightness = 0.5f;
+                            }
+                        }
+                    }
+                    break;
+
+                case MotionEvent.ACTION_MOVE:
+                    float deltaY = swipeStartY - y; // Upwards swipe increases value
+                    float deltaX = x - swipeStartX;
+
+                    if (!isSwipeGestureActive) {
+                        if (Math.abs(deltaY) > dp(14) && Math.abs(deltaY) > Math.abs(deltaX) * 1.2f) {
+                            isSwipeGestureActive = true;
+                        }
+                    }
+
+                    if (isSwipeGestureActive) {
+                        float deltaFraction = deltaY / viewHeight;
+
+                        if (isSwipeVolume) {
+                            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                            if (am != null) {
+                                int maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                                int targetVol = Math.max(0, Math.min(maxVol, initialVolume + Math.round(deltaFraction * maxVol)));
+                                am.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0);
+
+                                int percent = Math.round(((float) targetVol / (float) maxVol) * 100);
+                                String icon = (targetVol == 0) ? "🔇" : (percent < 50 ? "🔉" : "🔊");
+                                showGestureHud(icon, "Volume: " + percent + "%", percent);
+                            }
+                        } else {
+                            float targetBrightness = Math.max(0.01f, Math.min(1.0f, initialBrightness + deltaFraction));
+                            WindowManager.LayoutParams lp = getWindow().getAttributes();
+                            lp.screenBrightness = targetBrightness;
+                            getWindow().setAttributes(lp);
+
+                            int percent = Math.round(targetBrightness * 100);
+                            String icon = (percent < 35) ? "🔅" : "☀️";
+                            showGestureHud(icon, "Brightness: " + percent + "%", percent);
+                        }
+                        return true;
+                    }
+                    break;
+
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (isSwipeGestureActive) {
+                        isSwipeGestureActive = false;
+                        return true;
+                    }
+                    break;
+            }
+
+            return gestureHandled;
+        });
     }
 
     private void showControls() {
