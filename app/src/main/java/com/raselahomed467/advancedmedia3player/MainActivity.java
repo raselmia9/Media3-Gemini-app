@@ -649,6 +649,14 @@ public class MainActivity extends AppCompatActivity {
 
             playerView.setPlayer(player);
 
+            // Subtitles / text tracks disabled by default
+            player.setTrackSelectionParameters(
+                    player.getTrackSelectionParameters()
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .build()
+            );
+
             player.addListener(new Player.Listener() {
 
                 @Override
@@ -1008,6 +1016,7 @@ public class MainActivity extends AppCompatActivity {
                 player,
                 trackType
         )
+                .setShowDisableOption(true)
                 .setTrackNameProvider(
                         this::getTrackName
                 )
@@ -1016,8 +1025,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String getTrackName(Format format) {
-        StringBuilder name = new StringBuilder();
+        if (format == null) return "Unknown";
+
+        // 1. VIDEO TRACK RESOLUTION
         if (format.height > 0) {
+            StringBuilder name = new StringBuilder();
             String resolution = format.height + "p";
             if (format.height >= 2160) resolution += " (4K UHD)";
             else if (format.height >= 1080) resolution += " (FHD)";
@@ -1029,62 +1041,228 @@ public class MainActivity extends AppCompatActivity {
             return name.toString();
         }
 
-        if (format.label != null && !format.label.trim().isEmpty()) {
-            name.append(format.label.trim());
-        } else if (format.language != null && !format.language.equalsIgnoreCase("und")) {
-            String language = format.language.trim().toLowerCase(Locale.US);
-            if (language.length() == 3) {
-                if ("eng".equals(language)) language = "en";
-                else if ("ben".equals(language) || "beng".equals(language)) language = "bn";
-                else if ("hin".equals(language)) language = "hi";
-                else if ("urd".equals(language)) language = "ur";
-                else if ("ara".equals(language)) language = "ar";
-                else if ("spa".equals(language)) language = "es";
-                else if ("fra".equals(language)) language = "fr";
-                else if ("deu".equals(language) || "ger".equals(language)) language = "de";
-                else if ("por".equals(language)) language = "pt";
-                else if ("jpn".equals(language)) language = "ja";
-                else if ("kor".equals(language)) language = "ko";
-                else if ("chi".equals(language) || "zho".equals(language)) language = "zh";
-            }
-            Locale locale = Locale.forLanguageTag(language);
-            String displayName = locale.getDisplayLanguage(Locale.getDefault());
-            if (displayName == null || displayName.isEmpty()) displayName = format.language;
-            name.append(displayName);
-        } else {
-            name.append("Track");
+        String mime = format.sampleMimeType != null ? format.sampleMimeType.toLowerCase(Locale.US) : "";
+        boolean isAudio = format.channelCount > 0 || mime.startsWith("audio/");
+        boolean isText = mime.startsWith("text/") || mime.startsWith("application/");
+
+        // 2. RESOLVE LANGUAGE (Prioritize format.language, then inspect label)
+        String lang = resolveLanguageName(format.language);
+        if (lang == null) {
+            lang = extractLanguageFromLabel(format.label);
         }
 
-        String mime = format.sampleMimeType;
-        if (mime != null && mime.startsWith("audio/")) {
-            String codec;
-            switch (mime) {
-                case "audio/ac3": codec = "AC3"; break;
-                case "audio/eac3": codec = "E-AC3"; break;
-                case "audio/vnd.dts": codec = "DTS"; break;
-                case "audio/vnd.dts.hd": codec = "DTS-HD"; break;
-                case "audio/true-hd": codec = "TrueHD"; break;
-                case "audio/mp4a-latm": codec = "AAC"; break;
-                case "audio/opus": codec = "Opus"; break;
-                default: codec = mime.substring("audio/".length()).toUpperCase(Locale.US); break;
+        // Clean label: ignore spam / encoder metadata (e.g. Joya9.TV, 1TamilMV, etc.)
+        String cleanLabel = null;
+        if (format.label != null && !format.label.trim().isEmpty() && !isEncoderOrSpamLabel(format.label)) {
+            String trimmed = format.label.trim();
+            if (lang == null || !trimmed.equalsIgnoreCase(lang)) {
+                cleanLabel = trimmed;
             }
-            name.append(" • ").append(codec);
-            if (format.channelCount > 0) {
-                String channels;
-                switch (format.channelCount) {
-                    case 1: channels = "Mono"; break;
-                    case 2: channels = "Stereo"; break;
-                    case 6: channels = "5.1"; break;
-                    case 8: channels = "7.1"; break;
-                    default: channels = format.channelCount + "ch"; break;
-                }
-                name.append(" • ").append(channels);
-            }
-        } else if (mime != null && (mime.startsWith("text/") || mime.startsWith("application/"))) {
-            if ("text/vtt".equals(mime)) name.append(" • WebVTT");
-            else if ("application/ttml+xml".equals(mime)) name.append(" • TTML");
         }
-        return name.toString();
+
+        // 3. AUDIO TRACK (e.g. "Hindi, 5.1 surround sound", "Bangla, 5.1 surround sound", "English, Stereo")
+        if (isAudio) {
+            String mainTitle = lang != null ? lang : (cleanLabel != null ? cleanLabel : "Audio");
+
+            String channelDesc = "";
+            if (format.channelCount == 6) {
+                channelDesc = "5.1 surround sound";
+            } else if (format.channelCount == 8) {
+                channelDesc = "7.1 surround sound";
+            } else if (format.channelCount == 2) {
+                channelDesc = "Stereo";
+            } else if (format.channelCount == 1) {
+                channelDesc = "Mono";
+            } else if (format.channelCount > 0) {
+                channelDesc = format.channelCount + "ch surround sound";
+            }
+
+            StringBuilder audioName = new StringBuilder(mainTitle);
+            if (!channelDesc.isEmpty()) {
+                audioName.append(", ").append(channelDesc);
+            }
+            if (cleanLabel != null && lang != null && !cleanLabel.equalsIgnoreCase(lang)) {
+                audioName.append(" (").append(cleanLabel).append(")");
+            }
+            return audioName.toString();
+        }
+
+        // 4. SUBTITLE / TEXT TRACK (e.g. "Bangla", "English [SDH]", "Hindi [Forced]")
+        if (isText || (!isAudio && format.height <= 0)) {
+            String mainTitle = lang != null ? lang : (cleanLabel != null ? cleanLabel : "Subtitle");
+            StringBuilder subName = new StringBuilder(mainTitle);
+
+            if ((format.roleFlags & C.ROLE_FLAG_FORCED) != 0 || (format.selectionFlags & C.SELECTION_FLAG_FORCED) != 0) {
+                subName.append(" [Forced]");
+            } else if ((format.roleFlags & C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0) {
+                subName.append(" [SDH]");
+            }
+            return subName.toString();
+        }
+
+        return lang != null ? lang : (cleanLabel != null ? cleanLabel : "Track");
+    }
+
+    private String resolveLanguageName(String code) {
+        if (code == null || code.trim().isEmpty() || code.equalsIgnoreCase("und")) {
+            return null;
+        }
+
+        String c = code.trim().toLowerCase(Locale.US);
+
+        switch (c) {
+            case "hin":
+            case "hi":
+                return "Hindi";
+            case "ben":
+            case "beng":
+            case "bn":
+                return "Bangla";
+            case "eng":
+            case "en":
+                return "English";
+            case "urd":
+            case "ur":
+                return "Urdu";
+            case "tam":
+            case "ta":
+                return "Tamil";
+            case "tel":
+            case "te":
+                return "Telugu";
+            case "mal":
+            case "ml":
+                return "Malayalam";
+            case "kan":
+            case "kn":
+                return "Kannada";
+            case "mar":
+            case "mr":
+                return "Marathi";
+            case "guj":
+            case "gu":
+                return "Gujarati";
+            case "pan":
+            case "pnb":
+            case "pa":
+                return "Punjabi";
+            case "ara":
+            case "ar":
+                return "Arabic";
+            case "spa":
+            case "es":
+                return "Spanish";
+            case "fra":
+            case "fre":
+            case "fr":
+                return "French";
+            case "deu":
+            case "ger":
+            case "de":
+                return "German";
+            case "por":
+            case "pt":
+                return "Portuguese";
+            case "rus":
+            case "ru":
+                return "Russian";
+            case "jpn":
+            case "ja":
+                return "Japanese";
+            case "kor":
+            case "ko":
+                return "Korean";
+            case "zho":
+            case "chi":
+            case "zh":
+                return "Chinese";
+            case "ita":
+            case "it":
+                return "Italian";
+            case "tur":
+            case "tr":
+                return "Turkish";
+            case "ind":
+            case "id":
+                return "Indonesian";
+            case "vie":
+            case "vi":
+                return "Vietnamese";
+            case "tha":
+            case "th":
+                return "Thai";
+            default:
+                break;
+        }
+
+        try {
+            Locale loc = (c.length() == 2 || c.length() == 3)
+                    ? Locale.forLanguageTag(c)
+                    : new Locale(c);
+            String display = loc.getDisplayLanguage(Locale.US);
+            if (display != null && !display.isEmpty() && !display.equalsIgnoreCase(c)) {
+                return display;
+            }
+        } catch (Exception ignored) {
+        }
+
+        return capitalizeFirst(c);
+    }
+
+    private String extractLanguageFromLabel(String label) {
+        if (label == null || label.trim().isEmpty()) return null;
+        String lower = label.toLowerCase(Locale.US);
+
+        if (lower.contains("hindi") || lower.contains("hin")) return "Hindi";
+        if (lower.contains("bangla") || lower.contains("bengali") || lower.contains("ben")) return "Bangla";
+        if (lower.contains("english") || lower.contains("eng")) return "English";
+        if (lower.contains("tamil") || lower.contains("tam")) return "Tamil";
+        if (lower.contains("telugu") || lower.contains("tel")) return "Telugu";
+        if (lower.contains("urdu") || lower.contains("urd")) return "Urdu";
+        if (lower.contains("malayalam") || lower.contains("mal")) return "Malayalam";
+        if (lower.contains("kannada") || lower.contains("kan")) return "Kannada";
+        if (lower.contains("marathi") || lower.contains("mar")) return "Marathi";
+        if (lower.contains("gujarati") || lower.contains("guj")) return "Gujarati";
+        if (lower.contains("punjabi") || lower.contains("pan")) return "Punjabi";
+        if (lower.contains("arabic") || lower.contains("ara")) return "Arabic";
+        if (lower.contains("spanish") || lower.contains("spa")) return "Spanish";
+        if (lower.contains("french") || lower.contains("fre") || lower.contains("fra")) return "French";
+        if (lower.contains("german") || lower.contains("deu") || lower.contains("ger")) return "German";
+        if (lower.contains("portuguese") || lower.contains("por")) return "Portuguese";
+        if (lower.contains("russian") || lower.contains("rus")) return "Russian";
+        if (lower.contains("japanese") || lower.contains("jpn")) return "Japanese";
+        if (lower.contains("korean") || lower.contains("kor")) return "Korean";
+        if (lower.contains("chinese") || lower.contains("chi") || lower.contains("zho")) return "Chinese";
+        return null;
+    }
+
+    private boolean isEncoderOrSpamLabel(String label) {
+        if (label == null) return true;
+        String lower = label.toLowerCase(Locale.US);
+        return lower.contains("encoder")
+                || lower.contains("joya")
+                || lower.contains("tamilmv")
+                || lower.contains("1tamil")
+                || lower.contains("yify")
+                || lower.contains("yts")
+                || lower.contains("rarbg")
+                || lower.contains("psa")
+                || lower.contains("qxr")
+                || lower.contains("fgt")
+                || lower.contains("x264")
+                || lower.contains("x265")
+                || lower.contains("hevc")
+                || lower.contains("avc")
+                || lower.contains("dvd")
+                || lower.contains("bdrip")
+                || lower.contains("web-dl")
+                || lower.contains("webrip")
+                || lower.contains("bluray");
+    }
+
+    private String capitalizeFirst(String str) {
+        if (str == null || str.isEmpty()) return str;
+        return Character.toUpperCase(str.charAt(0)) + str.substring(1);
     }
 
     // ==========================================
