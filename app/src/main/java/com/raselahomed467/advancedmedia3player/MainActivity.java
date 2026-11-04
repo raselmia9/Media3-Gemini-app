@@ -34,6 +34,7 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import java.util.ArrayList;
 import java.util.List;
 import android.widget.LinearLayout;
@@ -94,7 +95,7 @@ public class MainActivity extends AppCompatActivity {
     private FrameLayout customControlsOverlay;
     private LinearLayout bottomPanel;
     private TextView btnPlayPause;
-    private TextView fullscreenButton;
+    private ImageView fullscreenButton;
     private SeekBar customSeekBar;
     private TextView timeCurrent;
     private TextView timeDuration;
@@ -234,7 +235,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Title Bar
         titleBar = new TextView(this);
-        titleBar.setText("ADVANCED MEDIA3 PLAYER");
+        titleBar.setText("RasVibe");
         titleBar.setTextColor(Color.WHITE);
         titleBar.setTextSize(18);
         titleBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -402,8 +403,8 @@ public class MainActivity extends AppCompatActivity {
         buttonsRow.setGravity(Gravity.CENTER);
         buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
 
-        // 1. Picture in Picture (PiP) Mode Icon
-        addControllerButton(buttonsRow, "▣", "Picture in Picture", this::enterPictureInPicture);
+        // 1. Picture in Picture (PiP) Mode Icon (using picture_in_picture.png)
+        addControllerIconButton(buttonsRow, "picture_in_picture", "▣", "Picture in Picture", this::enterPictureInPicture);
 
         // 2. Rewind 10s
         addControllerButton(buttonsRow, "◀◀", "Rewind 10s", this::rewind10s);
@@ -415,11 +416,11 @@ public class MainActivity extends AppCompatActivity {
         // 4. Forward 10s
         addControllerButton(buttonsRow, "▶▶", "Forward 10s", this::forward10s);
 
-        // 5. Settings (Gear) icon: Audio, Subtitle, Video tracks, Resize, Speed
-        addControllerButton(buttonsRow, "⚙", "Settings", this::showPlayerSettings);
+        // 5. Settings (Gear) icon (using video_settings.png)
+        addControllerIconButton(buttonsRow, "video_settings", "⚙", "Settings", this::showPlayerSettings);
 
-        // 6. Fullscreen Toggle (Enter ⤢ / Exit ⤡)
-        fullscreenButton = addControllerButton(buttonsRow, "⤢", "Enter fullscreen", this::toggleFullscreen);
+        // 6. Fullscreen Toggle (using fullscreen_enter.png / fullscreen_exit.png)
+        fullscreenButton = addControllerIconButton(buttonsRow, "fullscreen_enter", "⤢", "Enter fullscreen", this::toggleFullscreen);
 
         bottomPanel.addView(buttonsRow);
 
@@ -497,6 +498,42 @@ public class MainActivity extends AppCompatActivity {
         button.setTextColor(Color.WHITE);
         button.setTextSize(18);
         button.setGravity(Gravity.CENTER);
+        button.setContentDescription(description);
+        button.setFocusable(true);
+        button.setClickable(true);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(180, 35, 48, 67));
+        bg.setCornerRadius(dp(12));
+        button.setBackground(bg);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(40));
+        params.leftMargin = dp(5);
+        params.rightMargin = dp(5);
+        parent.addView(button, params);
+
+        button.setOnClickListener(v -> {
+            action.run();
+            resetAutoHide();
+        });
+        return button;
+    }
+
+    private ImageView addControllerIconButton(
+            LinearLayout parent,
+            String drawableName,
+            String fallbackSymbol,
+            String description,
+            Runnable action
+    ) {
+        ImageView button = new ImageView(this);
+        int resId = getResources().getIdentifier(drawableName, "drawable", getPackageName());
+        if (resId != 0) {
+            button.setImageResource(resId);
+        }
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setColorFilter(Color.WHITE);
+        button.setPadding(dp(11), dp(9), dp(11), dp(9));
         button.setContentDescription(description);
         button.setFocusable(true);
         button.setClickable(true);
@@ -1692,7 +1729,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateFullscreenButton() {
         if (fullscreenButton != null) {
-            fullscreenButton.setText(fullscreen ? "⤡" : "⤢");
+            int iconRes = getResources().getIdentifier(
+                    fullscreen ? "fullscreen_exit" : "fullscreen_enter",
+                    "drawable",
+                    getPackageName()
+            );
+            if (iconRes != 0) {
+                fullscreenButton.setImageResource(iconRes);
+            }
             fullscreenButton.setContentDescription(fullscreen ? "Exit fullscreen" : "Enter fullscreen");
         }
     }
