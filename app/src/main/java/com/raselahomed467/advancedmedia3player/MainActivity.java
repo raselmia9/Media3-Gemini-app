@@ -103,7 +103,9 @@ public class MainActivity extends AppCompatActivity {
     // Gesture detection & Center HUD
     private GestureDetector gestureDetector;
     private ScaleGestureDetector scaleGestureDetector;
-    private float currentVideoScale = 1.0f;
+    private float currentScaleX = 1.0f;
+    private float currentScaleY = 1.0f;
+    private int scaleDirection = 0; // 0 = none, 1 = horizontal, 2 = vertical
     private FrameLayout gestureHudCard;
     private TextView gestureHudIcon;
     private TextView gestureHudText;
@@ -631,34 +633,87 @@ public class MainActivity extends AppCompatActivity {
 
         scaleGestureDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override
-            public boolean onScale(ScaleGestureDetector detector) {
-                float factor = detector.getScaleFactor();
-                currentVideoScale *= factor;
-                // Pinch to Zoom between 1.0f (fit) and 4.0f (zoomed)
-                currentVideoScale = Math.max(1.0f, Math.min(currentVideoScale, 4.0f));
+            public boolean onScaleBegin(ScaleGestureDetector detector) {
+                scaleDirection = 0;
+                return true;
+            }
 
-                if (playerView != null) {
-                    playerView.setScaleX(currentVideoScale);
-                    playerView.setScaleY(currentVideoScale);
+            @Override
+            public boolean onScale(ScaleGestureDetector detector) {
+                float spanX = detector.getCurrentSpanX();
+                float prevSpanX = detector.getPreviousSpanX();
+                float spanY = detector.getCurrentSpanY();
+                float prevSpanY = detector.getPreviousSpanY();
+
+                float diffX = Math.abs(spanX - prevSpanX);
+                float diffY = Math.abs(spanY - prevSpanY);
+
+                if (scaleDirection == 0) {
+                    if (diffX > diffY && diffX > dp(5)) {
+                        scaleDirection = 1; // Horizontal gesture
+                    } else if (diffY > diffX && diffY > dp(5)) {
+                        scaleDirection = 2; // Vertical gesture
+                    }
                 }
 
-                int percent = Math.round(currentVideoScale * 100);
-                showGestureHud("🔍", percent + "% Zoom", -1);
+                if (scaleDirection == 1) {
+                    // Horizontal Zoom In / Zoom Out (width change only)
+                    if (prevSpanX > 10f && spanX > 10f) {
+                        float factorX = spanX / prevSpanX;
+                        currentScaleX = Math.max(0.70f, Math.min(currentScaleX * factorX, 4.0f));
+                        if (playerView != null) {
+                            playerView.setScaleX(currentScaleX);
+                        }
+                        int percent = Math.round(currentScaleX * 100);
+                        showGestureHud("↔️", "Horizontal: " + percent + "%", -1);
+                    }
+                } else if (scaleDirection == 2) {
+                    // Vertical Zoom In / Zoom Out (height change only)
+                    if (prevSpanY > 10f && spanY > 10f) {
+                        float factorY = spanY / prevSpanY;
+                        currentScaleY = Math.max(0.70f, Math.min(currentScaleY * factorY, 4.0f));
+                        if (playerView != null) {
+                            playerView.setScaleY(currentScaleY);
+                        }
+                        int percent = Math.round(currentScaleY * 100);
+                        showGestureHud("↕️", "Vertical: " + percent + "%", -1);
+                    }
+                } else {
+                    // Slight diagonal motion or fallback
+                    float factor = detector.getScaleFactor();
+                    if (diffX >= diffY) {
+                        currentScaleX = Math.max(0.70f, Math.min(currentScaleX * factor, 4.0f));
+                        if (playerView != null) playerView.setScaleX(currentScaleX);
+                        showGestureHud("↔️", "Horizontal: " + Math.round(currentScaleX * 100) + "%", -1);
+                    } else {
+                        currentScaleY = Math.max(0.70f, Math.min(currentScaleY * factor, 4.0f));
+                        if (playerView != null) playerView.setScaleY(currentScaleY);
+                        showGestureHud("↕️", "Vertical: " + Math.round(currentScaleY * 100) + "%", -1);
+                    }
+                }
                 return true;
             }
 
             @Override
             public void onScaleEnd(ScaleGestureDetector detector) {
-                // If user pinches back to normal size, smoothly snap to 1.0
-                if (currentVideoScale <= 1.08f) {
-                    currentVideoScale = 1.0f;
+                scaleDirection = 0;
+                // Snap smoothly to 1.0 if close to original aspect ratio
+                if (Math.abs(currentScaleX - 1.0f) < 0.08f) {
+                    currentScaleX = 1.0f;
+                    if (playerView != null) playerView.setScaleX(1.0f);
+                }
+                if (Math.abs(currentScaleY - 1.0f) < 0.08f) {
+                    currentScaleY = 1.0f;
+                    if (playerView != null) playerView.setScaleY(1.0f);
+                }
+                if (currentScaleX == 1.0f && currentScaleY == 1.0f) {
                     if (playerView != null) {
                         playerView.setScaleX(1.0f);
                         playerView.setScaleY(1.0f);
                         playerView.setTranslationX(0);
                         playerView.setTranslationY(0);
                     }
-                    showGestureHud("🔍", "Fit to Screen", -1);
+                    showGestureHud("🔍", "Fit to Screen (100%)", -1);
                 }
             }
         });
