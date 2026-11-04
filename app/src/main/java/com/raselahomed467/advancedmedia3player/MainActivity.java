@@ -30,11 +30,12 @@ import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
-
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.media3.common.VideoSize;
 import androidx.activity.OnBackPressedCallback;
-
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
@@ -44,31 +45,27 @@ import androidx.media3.common.audio.AudioProcessor;
 import androidx.media3.common.audio.ChannelMixingAudioProcessor;
 import androidx.media3.common.audio.ChannelMixingMatrix;
 import androidx.media3.common.util.UnstableApi;
-
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.audio.AudioSink;
 import androidx.media3.exoplayer.audio.DefaultAudioSink;
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager;
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManagerProvider;
+import androidx.media3.exoplayer.drm.DrmSessionManager;
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback;
-import androidx.media3.exoplayer.drm.DrmSessionManager;
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManagerProvider;
-
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 import androidx.media3.ui.TrackSelectionDialogBuilder;
-import androidx.media3.ui.AspectRatioFrameLayout;
-
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
-
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
 
 @UnstableApi
 public class MainActivity extends AppCompatActivity {
@@ -83,65 +80,64 @@ public class MainActivity extends AppCompatActivity {
     private Thread htmlLoadThread;
 
     private FrameLayout playerContainer;
-
-    // Custom Controls Overlay & Elements
     private FrameLayout customControlsOverlay;
     private LinearLayout bottomPanel;
-    private ProgressBar bufferingProgress;
     private TextView btnPlayPause;
+    private TextView fullscreenButton;
+    private SeekBar customSeekBar;
     private TextView timeCurrent;
     private TextView timeDuration;
-    private SeekBar customSeekBar;
-    private TextView fullscreenButton;
+    private ProgressBar bufferingProgress;
 
     private EditText urlInput;
     private TextView statusText;
 
     private boolean fullscreen = false;
+    private boolean wasFullscreenBeforePip = false;
     private int resizeMode = 0;
+
     private boolean isControlsVisible = true;
     private boolean isUserSeeking = false;
-    private boolean wasFullscreenBeforePip = false;
-
     private final Handler handler = new Handler(Looper.getMainLooper());
+
     private final Runnable autoHideRunnable = this::hideControls;
 
-    // Progress bar updater
     private final Runnable updateProgressRunnable = new Runnable() {
         @Override
         public void run() {
             if (player != null && !isUserSeeking) {
-                long current = player.getCurrentPosition();
-                long duration = player.getDuration();
+                long pos = Math.max(0, player.getCurrentPosition());
+                long dur = Math.max(0, player.getDuration());
 
-                if (duration > 0) {
-                    customSeekBar.setMax((int) duration);
-                    customSeekBar.setProgress((int) current);
-                    timeDuration.setText(formatTime(duration));
+                if (dur > 0) {
+                    customSeekBar.setMax((int) dur);
+                    customSeekBar.setProgress((int) pos);
+                    timeCurrent.setText(formatTime(pos));
+                    timeDuration.setText(formatTime(dur));
                 } else {
+                    timeCurrent.setText(formatTime(pos));
                     timeDuration.setText("LIVE");
                 }
-                timeCurrent.setText(formatTime(current));
 
-                if (player.isPlaying()) {
-                    btnPlayPause.setText("❚❚");
-                } else {
-                    btnPlayPause.setText("▶");
+                if (btnPlayPause != null) {
+                    btnPlayPause.setText(player.isPlaying() ? "❚❚" : "▶");
                 }
             }
-            handler.postDelayed(this, 500);
+            handler.postDelayed(this, 800);
         }
     };
 
-    private final int BG_COLOR = Color.rgb(9, 13, 22);
-    private final int BUTTON_COLOR = Color.rgb(35, 48, 67);
-    private final int PRIMARY_COLOR = Color.rgb(0, 126, 220);
+    private static final int BG_COLOR = Color.rgb(18, 24, 38);
+    private static final int PRIMARY_COLOR = Color.rgb(41, 128, 255);
+    private static final int BUTTON_COLOR = Color.rgb(33, 44, 61);
 
-    private int dp(float value) {
-        return (int) (
-                value * getResources().getDisplayMetrics().density + 0.5f
-        );
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
+
+    // ==========================================
+    // LIFECYCLE
+    // ==========================================
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -234,7 +230,6 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.30f));
 
         // Bottom Section: URL input + Play button + Web content
-        // padding is 0 here so the WebView has fixed edge-to-edge width with zero side margins
         inputScroll = new LinearLayout(this);
         inputScroll.setOrientation(LinearLayout.VERTICAL);
         inputScroll.setBackgroundColor(BG_COLOR);
@@ -656,6 +651,16 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 @Override
+                public void onIsPlayingChanged(boolean isPlaying) {
+                    updatePipParams();
+                }
+
+                @Override
+                public void onVideoSizeChanged(VideoSize videoSize) {
+                    updatePipParams();
+                }
+
+                @Override
                 public void onPlayerError(PlaybackException error) {
                     if (bufferingProgress != null) bufferingProgress.setVisibility(View.GONE);
                     setStatus(
@@ -1021,7 +1026,7 @@ public class MainActivity extends AppCompatActivity {
                 else if ("por".equals(language)) language = "pt";
                 else if ("jpn".equals(language)) language = "ja";
                 else if ("kor".equals(language)) language = "ko";
-                else if ("chi".equals(language) || "zho".equals(language)) language = "zh";
+                else if ("chi".equals(language)) language = "zh";
             }
             Locale locale = Locale.forLanguageTag(language);
             String displayName = locale.getDisplayLanguage(Locale.getDefault());
@@ -1144,7 +1149,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // FULLSCREEN
+    // FULLSCREEN (STATUS BAR & NAVIGATION BAR HIDE)
     // ==========================================
 
     private void toggleFullscreen() {
@@ -1153,35 +1158,81 @@ public class MainActivity extends AppCompatActivity {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                WindowManager.LayoutParams attrs = getWindow().getAttributes();
-                attrs.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-                getWindow().setAttributes(attrs);
-            }
-            getWindow().setStatusBarColor(Color.TRANSPARENT);
-            getWindow().setNavigationBarColor(Color.TRANSPARENT);
-            int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-            getWindow().getDecorView().setSystemUiVisibility(flags);
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+            ));
+            applyFullscreenSystemUi(true);
             setStatus("Fullscreen Mode");
         } else {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-            getWindow().setStatusBarColor(BG_COLOR);
-            getWindow().setNavigationBarColor(BG_COLOR);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                WindowManager.LayoutParams attrs = getWindow().getAttributes();
-                attrs.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-                getWindow().setAttributes(attrs);
-            }
+            applyFullscreenSystemUi(false);
             titleBar.setVisibility(View.VISIBLE);
             inputScroll.setVisibility(View.VISIBLE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    0.30f
+            ));
             setStatus("Normal Mode");
         }
         updateFullscreenButton();
+    }
+
+    private void applyFullscreenSystemUi(boolean isFull) {
+        try {
+            WindowInsetsControllerCompat controller =
+                    new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
+
+            if (isFull) {
+                // Completely hide both Status Bar and Navigation Bar
+                controller.hide(WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.navigationBars());
+                controller.setSystemBarsBehavior(
+                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                );
+
+                // Legacy system UI flags for older Android / MIUI versions
+                int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+                getWindow().getDecorView().setSystemUiVisibility(flags);
+
+                getWindow().setStatusBarColor(Color.TRANSPARENT);
+                getWindow().setNavigationBarColor(Color.TRANSPARENT);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    WindowManager.LayoutParams attrs = getWindow().getAttributes();
+                    attrs.layoutInDisplayCutoutMode =
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                    getWindow().setAttributes(attrs);
+                }
+            } else {
+                // Restore Status Bar and Navigation Bar
+                controller.show(WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.navigationBars());
+
+                getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+                getWindow().setStatusBarColor(BG_COLOR);
+                getWindow().setNavigationBarColor(BG_COLOR);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    WindowManager.LayoutParams attrs = getWindow().getAttributes();
+                    attrs.layoutInDisplayCutoutMode =
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+                    getWindow().setAttributes(attrs);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && fullscreen && !isInPipMode()) {
+            applyFullscreenSystemUi(true);
+        }
     }
 
     private void updateFullscreenButton() {
@@ -1214,6 +1265,36 @@ public class MainActivity extends AppCompatActivity {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode();
     }
 
+    private void updatePipParams() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        try {
+            Rational aspectRatio = new Rational(16, 9);
+            if (player != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
+                int vw = player.getVideoSize().width;
+                int vh = player.getVideoSize().height;
+                float r = (float) vw / (float) vh;
+                if (r >= 0.42f && r <= 2.39f) {
+                    aspectRatio = new Rational(vw, vh);
+                }
+            }
+
+            PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio);
+
+            Rect sourceRect = new Rect();
+            playerView.getGlobalVisibleRect(sourceRect);
+            if (!sourceRect.isEmpty()) {
+                builder.setSourceRectHint(sourceRect);
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setAutoEnterEnabled(player != null && player.isPlaying());
+            }
+
+            setPictureInPictureParams(builder.build());
+        } catch (Exception ignored) {}
+    }
+
     private void enterPictureInPicture() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             toast("Picture-in-Picture requires Android 8.0 or newer");
@@ -1226,45 +1307,49 @@ public class MainActivity extends AppCompatActivity {
         try {
             wasFullscreenBeforePip = fullscreen;
 
-            // Reset orientation lock so window manager transitions cleanly into PiP
+            // Reset orientation so PiP transitions cleanly
             if (fullscreen) {
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
             }
 
-            // Immediately isolate ONLY the player layout on screen
+            // Immediately hide everything except video view
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-            bottomPanel.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            if (customControlsOverlay != null) {
+                customControlsOverlay.setVisibility(View.GONE);
+            }
+            if (bottomPanel != null) {
+                bottomPanel.setVisibility(View.GONE);
+            }
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+            ));
 
-            // Run after the view layout pass completes so the PiP snapshot captures ONLY the video
-            playerContainer.post(() -> {
-                try {
-                    Rational aspectRatio = new Rational(16, 9);
-                    if (player != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
-                        int vw = player.getVideoSize().width;
-                        int vh = player.getVideoSize().height;
-                        float r = (float) vw / (float) vh;
-                        if (r >= 0.42f && r <= 2.39f) {
-                            aspectRatio = new Rational(vw, vh);
-                        }
-                    }
-
-                    PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
-                            .setAspectRatio(aspectRatio);
-
-                    Rect sourceRect = new Rect();
-                    playerView.getGlobalVisibleRect(sourceRect);
-                    if (!sourceRect.isEmpty()) {
-                        builder.setSourceRectHint(sourceRect);
-                    }
-
-                    enterPictureInPictureMode(builder.build());
-                } catch (Exception e) {
-                    restoreLayoutFromPip();
-                    toast("PiP error: " + e.getMessage());
+            Rational aspectRatio = new Rational(16, 9);
+            if (player != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
+                int vw = player.getVideoSize().width;
+                int vh = player.getVideoSize().height;
+                float r = (float) vw / (float) vh;
+                if (r >= 0.42f && r <= 2.39f) {
+                    aspectRatio = new Rational(vw, vh);
                 }
-            });
+            }
+
+            PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio);
+
+            Rect sourceRect = new Rect();
+            playerView.getGlobalVisibleRect(sourceRect);
+            if (!sourceRect.isEmpty()) {
+                builder.setSourceRectHint(sourceRect);
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setAutoEnterEnabled(true);
+            }
+
+            enterPictureInPictureMode(builder.build());
 
         } catch (Exception e) {
             restoreLayoutFromPip();
@@ -1273,17 +1358,29 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void restoreLayoutFromPip() {
+        if (customControlsOverlay != null) {
+            customControlsOverlay.setVisibility(View.VISIBLE);
+        }
         fullscreen = wasFullscreenBeforePip;
         if (fullscreen) {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+            ));
+            applyFullscreenSystemUi(true);
         } else {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
             titleBar.setVisibility(View.VISIBLE);
             inputScroll.setVisibility(View.VISIBLE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.30f));
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    0.30f
+            ));
+            applyFullscreenSystemUi(false);
         }
         showControls();
         updateFullscreenButton();
@@ -1296,11 +1393,28 @@ public class MainActivity extends AppCompatActivity {
             // Keep strictly video container visible in PiP
             titleBar.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
-            bottomPanel.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            if (customControlsOverlay != null) {
+                customControlsOverlay.setVisibility(View.GONE);
+            }
+            if (bottomPanel != null) {
+                bottomPanel.setVisibility(View.GONE);
+            }
+            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+            ));
         } else {
             // Restored from PiP
             restoreLayoutFromPip();
+        }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        // Auto-enter PiP when Home button/gesture is pressed while video is playing
+        if (player != null && player.isPlaying()) {
+            enterPictureInPicture();
         }
     }
 
