@@ -4,14 +4,12 @@ import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.app.PictureInPictureParams;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -20,11 +18,9 @@ import android.os.Looper;
 import android.util.Rational;
 import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
-import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -76,12 +72,11 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.Executors;
 
 import okhttp3.OkHttpClient;
@@ -94,12 +89,6 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String GITHUB_HTML_URL =
             "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/EventCode.html";
-
-    private static final UUID CLEARKEY_UUID =
-            new UUID(0x1077EFECC0B24D02L, 0xACE33C1E52E2FB4BL);
-
-    private static final UUID WIDEVINE_UUID =
-            new UUID(0xEDEF8BA979D64ACEL, 0xA3C827DCD51D21EDL);
 
     private FrameLayout rootContainer;
     private ScrollView pageScrollView;
@@ -610,26 +599,22 @@ public class MainActivity extends AppCompatActivity {
     // ==========================================
 
     private void initPlayer() {
-        DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(this)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
-
         AudioProcessor downmixProcessor = createSurroundDownmixProcessor();
 
-        renderersFactory.buildAudioSink(this, true, false) ;
-        AudioSink customAudioSink = new DefaultAudioSink.Builder(this)
-                .setAudioProcessors(new AudioProcessor[]{downmixProcessor})
-                .build();
-
-        renderersFactory = new DefaultRenderersFactory(this) {
+        DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(this) {
             @Override
             protected AudioSink buildAudioSink(
                     Context context,
                     boolean enableFloatOutput,
-                    boolean enableAudioTrackPlaybackParams
+                    boolean enableAudioOutputPlaybackParams
             ) {
-                return customAudioSink;
+                return new DefaultAudioSink.Builder(context)
+                        .setAudioProcessors(new AudioProcessor[]{downmixProcessor})
+                        .build();
             }
-        }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+        };
+        renderersFactory.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+        renderersFactory.setEnableDecoderFallback(true);
 
         OkHttpClient okHttpClient = new OkHttpClient.Builder().build();
         OkHttpDataSource.Factory dataSourceFactory =
@@ -739,20 +724,20 @@ public class MainActivity extends AppCompatActivity {
         OkHttpDataSource.Factory dataSourceFactory =
                 new OkHttpDataSource.Factory(clientBuilder.build());
 
-        if (headers != null) {
+        if (headers != null && !headers.isEmpty()) {
             dataSourceFactory.setDefaultRequestProperties(headers);
         }
 
         MediaItem.Builder mediaItemBuilder = new MediaItem.Builder()
                 .setUri(Uri.parse(streamUrl));
 
-        if (drmType != null) {
-            setupDrm(mediaItemBuilder, drmType, licenseUrl, keyIdHex, keyHex, headers);
-        }
-
         DefaultMediaSourceFactory mediaSourceFactory =
                 new DefaultMediaSourceFactory(this)
                         .setDataSourceFactory(dataSourceFactory);
+
+        if (drmType != null && !drmType.trim().isEmpty()) {
+            setupDrm(mediaSourceFactory, mediaItemBuilder, dataSourceFactory, drmType, licenseUrl, keyIdHex, keyHex, headers);
+        }
 
         player.setMediaSource(mediaSourceFactory.createMediaSource(mediaItemBuilder.build()));
         player.prepare();
@@ -763,7 +748,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupDrm(
+            DefaultMediaSourceFactory mediaSourceFactory,
             MediaItem.Builder mediaItemBuilder,
+            OkHttpDataSource.Factory dataSourceFactory,
             String drmType,
             String licenseUrl,
             String keyIdHex,
@@ -773,54 +760,58 @@ public class MainActivity extends AppCompatActivity {
 
         if ("clearkey".equalsIgnoreCase(drmType)) {
 
-            if (keyIdHex != null && keyHex != null) {
+            if (keyIdHex != null && keyHex != null && !keyIdHex.isEmpty() && !keyHex.isEmpty()) {
 
-                String response = "{\"keys\":[{"
-                        + "\"kty\":\"oct\","
-                        + "\"k\":\"" + base64Url(hexToBytes(keyHex)) + "\","
-                        + "\"kid\":\"" + base64Url(hexToBytes(keyIdHex)) + "\""
-                        + "}],\"type\":\"temporary\"}";
+                String response = "{"keys":[{"kty":"oct","k":""
+                        + base64Url(hexToBytes(keyHex)) + "","kid":""
+                        + base64Url(hexToBytes(keyIdHex)) + ""}],"type":"temporary"}";
 
                 LocalMediaDrmCallback drmCallback =
-                        new LocalMediaDrmCallback(response.getBytes());
+                        new LocalMediaDrmCallback(response.getBytes(StandardCharsets.UTF_8));
 
                 DrmSessionManager drmSessionManager =
                         new DefaultDrmSessionManager.Builder()
                                 .setUuidAndExoMediaDrmProvider(
-                                        CLEARKEY_UUID,
+                                        C.CLEARKEY_UUID,
                                         FrameworkMediaDrm.DEFAULT_PROVIDER
                                 )
                                 .build(drmCallback);
 
-                DefaultDrmSessionManagerProvider provider =
-                        new DefaultDrmSessionManagerProvider();
-
-                provider.setDrmSessionManager(drmSessionManager);
-
-                mediaItemBuilder.setDrmConfiguration(
-                        new MediaItem.DrmConfiguration.Builder(CLEARKEY_UUID).build()
+                mediaSourceFactory.setDrmSessionManagerProvider(
+                        unusedMediaItem -> drmSessionManager
                 );
 
-            } else if (licenseUrl != null) {
+                mediaItemBuilder.setDrmConfiguration(
+                        new MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID).build()
+                );
+
+            } else if (licenseUrl != null && !licenseUrl.isEmpty()) {
 
                 MediaItem.DrmConfiguration.Builder drmBuilder =
-                        new MediaItem.DrmConfiguration.Builder(CLEARKEY_UUID)
+                        new MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
                                 .setLicenseUri(licenseUrl);
 
-                if (headers != null) {
+                if (headers != null && !headers.isEmpty()) {
                     drmBuilder.setLicenseRequestHeaders(headers);
                 }
 
                 mediaItemBuilder.setDrmConfiguration(drmBuilder.build());
             }
 
-        } else if ("widevine".equalsIgnoreCase(drmType) && licenseUrl != null) {
+        } else if ("widevine".equalsIgnoreCase(drmType) && licenseUrl != null && !licenseUrl.isEmpty()) {
+
+            DefaultDrmSessionManagerProvider drmProvider =
+                    new DefaultDrmSessionManagerProvider();
+
+            drmProvider.setDrmHttpDataSourceFactory(dataSourceFactory);
+
+            mediaSourceFactory.setDrmSessionManagerProvider(drmProvider);
 
             MediaItem.DrmConfiguration.Builder drmBuilder =
-                    new MediaItem.DrmConfiguration.Builder(WIDEVINE_UUID)
+                    new MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
                             .setLicenseUri(licenseUrl);
 
-            if (headers != null) {
+            if (headers != null && !headers.isEmpty()) {
                 drmBuilder.setLicenseRequestHeaders(headers);
             }
 
@@ -1385,7 +1376,7 @@ public class MainActivity extends AppCompatActivity {
 
     private List<EpisodeItem> parsePlaylist(String raw) {
         List<EpisodeItem> list = new ArrayList<>();
-        String[] items = raw.split(",\\)");
+        String[] items = raw.split(",\)");
         for (String item : items) {
             String trimmed = item.trim();
             if (trimmed.isEmpty()) continue;
@@ -1500,7 +1491,8 @@ public class MainActivity extends AppCompatActivity {
                 StringBuilder htmlBuilder = new StringBuilder();
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    htmlBuilder.append(line).append("\n");
+                    htmlBuilder.append(line).append("
+");
                 }
                 reader.close();
 
@@ -1520,38 +1512,61 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String patchHtmlForViewportAndBridge(String html) {
-        String bridgeHook = "<script>\n" +
-                "(function(){\n" +
-                "  function sendToAndroid(val){\n" +
-                "    if(window.AndroidBridge && window.AndroidBridge.postMessage) window.AndroidBridge.postMessage(val);\n" +
-                "    if(window.CustomWebView && window.CustomWebView.setWebViewString) window.CustomWebView.setWebViewString(val);\n" +
-                "  }\n" +
-                "  window.sendData = function(url){ sendToAndroid(url); };\n" +
-                "  window.setWebViewString = function(url){ sendToAndroid(url); };\n" +
-                "})();\n" +
-                "</script>\n";
+        String bridgeHook = "<script>
+" +
+                "(function(){
+" +
+                "  function sendToAndroid(val){
+" +
+                "    if(window.AndroidBridge && window.AndroidBridge.postMessage) window.AndroidBridge.postMessage(val);
+" +
+                "    if(window.CustomWebView && window.CustomWebView.setWebViewString) window.CustomWebView.setWebViewString(val);
+" +
+                "  }
+" +
+                "  window.sendData = function(url){ sendToAndroid(url); };
+" +
+                "  window.setWebViewString = function(url){ sendToAndroid(url); };
+" +
+                "})();
+" +
+                "</script>
+";
 
-        String metaTag = "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">";
+        String metaTag = "<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">";
         String styleZeroMargin = "<style>html, body { margin: 0; padding: 0; width: 100%; box-sizing: border-box; } * { box-sizing: border-box; }</style>";
 
         if (html.contains("<head>")) {
-            return html.replace("<head>", "<head>\n" + metaTag + "\n" + styleZeroMargin + "\n" + bridgeHook);
+            return html.replace("<head>", "<head>
+" + metaTag + "
+" + styleZeroMargin + "
+" + bridgeHook);
         } else {
             return metaTag + styleZeroMargin + bridgeHook + html;
         }
     }
 
     private void injectBridgeShim() {
-        String js = "javascript:(function(){\n" +
-                "  function forward(v){\n" +
-                "    if(window.AndroidBridge && window.AndroidBridge.postMessage) window.AndroidBridge.postMessage(v);\n" +
-                "    if(window.CustomWebView && window.CustomWebView.setWebViewString) window.CustomWebView.setWebViewString(v);\n" +
-                "  }\n" +
-                "  var oldSendData = window.sendData;\n" +
-                "  window.sendData = function(val){\n" +
-                "    forward(val);\n" +
-                "    if(typeof oldSendData === 'function') { try{ oldSendData(val); }catch(e){} }\n" +
-                "  };\n" +
+        String js = "javascript:(function(){
+" +
+                "  function forward(v){
+" +
+                "    if(window.AndroidBridge && window.AndroidBridge.postMessage) window.AndroidBridge.postMessage(v);
+" +
+                "    if(window.CustomWebView && window.CustomWebView.setWebViewString) window.CustomWebView.setWebViewString(v);
+" +
+                "  }
+" +
+                "  var oldSendData = window.sendData;
+" +
+                "  window.sendData = function(val){
+" +
+                "    forward(val);
+" +
+                "    if(typeof oldSendData === 'function') { try{ oldSendData(val); }catch(e){} }
+" +
+                "  };
+" +
                 "})();";
         webView.evaluateJavascript(js, null);
     }
