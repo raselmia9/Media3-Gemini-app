@@ -25,6 +25,9 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import java.util.ArrayList;
+import java.util.List;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
@@ -91,6 +94,10 @@ public class MainActivity extends AppCompatActivity {
 
     private EditText urlInput;
     private TextView statusText;
+
+    private HorizontalScrollView episodesScroll;
+    private LinearLayout episodesContainer;
+    private final List<TextView> episodeButtonViews = new ArrayList<>();
 
     private boolean fullscreen = false;
     private boolean wasFullscreenBeforePip = false;
@@ -233,6 +240,18 @@ public class MainActivity extends AppCompatActivity {
         inputScroll = new LinearLayout(this);
         inputScroll.setOrientation(LinearLayout.VERTICAL);
         inputScroll.setBackgroundColor(BG_COLOR);
+
+        // Dynamic Episode / Multi-Link Buttons Horizontal Row
+        episodesScroll = new HorizontalScrollView(this);
+        episodesScroll.setHorizontalScrollBarEnabled(false);
+        episodesScroll.setPadding(dp(14), dp(8), dp(14), dp(4));
+        episodesScroll.setVisibility(View.GONE);
+
+        episodesContainer = new LinearLayout(this);
+        episodesContainer.setOrientation(LinearLayout.HORIZONTAL);
+        episodesScroll.addView(episodesContainer, new FrameLayout.LayoutParams(-2, -2));
+
+        inputScroll.addView(episodesScroll, new LinearLayout.LayoutParams(-1, -2));
 
         // Header container for Input & Status with appropriate side padding
         LinearLayout inputHeader = new LinearLayout(this);
@@ -1026,7 +1045,7 @@ public class MainActivity extends AppCompatActivity {
                 else if ("por".equals(language)) language = "pt";
                 else if ("jpn".equals(language)) language = "ja";
                 else if ("kor".equals(language)) language = "ko";
-                else if ("chi".equals(language)) language = "zh";
+                else if ("chi".equals(language) || "zho".equals(language)) language = "zh";
             }
             Locale locale = Locale.forLanguageTag(language);
             String displayName = locale.getDisplayLanguage(Locale.getDefault());
@@ -1419,24 +1438,136 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // WEBVIEW BRIDGE & GITHUB HTML
+    // WEBVIEW BRIDGE & DYNAMIC MULTI-LINK BUTTONS
     // ==========================================
+
+    private static class EpisodeItem {
+        final String title;
+        final String url;
+
+        EpisodeItem(String title, String url) {
+            this.title = title;
+            this.url = url;
+        }
+    }
 
     private class HtmlItemBridge {
         @JavascriptInterface
         public void setWebViewString(String value) {
             if (value == null) return;
-            runOnUiThread(() -> {
-                String output = value.trim();
-                if (output.startsWith("Playlist>")) {
-                    output = output.substring("Playlist>".length()).trim();
+            runOnUiThread(() -> handleWebViewData(value));
+        }
+    }
+
+    private void handleWebViewData(String raw) {
+        String clean = raw.trim();
+        if (clean.startsWith("Playlist>")) {
+            clean = clean.substring("Playlist>".length()).trim();
+        }
+
+        // Multi-link parsing: check for ,, and ,) separators
+        if (clean.contains(",,") && (clean.contains(",)") || clean.contains(","))) {
+            String[] rawItems = clean.split(",\\)");
+            List<EpisodeItem> episodes = new ArrayList<>();
+            for (String it : rawItems) {
+                it = it.trim();
+                if (it.isEmpty()) continue;
+                String[] parts = it.split(",,", 2);
+                if (parts.length == 2) {
+                    String title = parts[0].trim();
+                    String link = parts[1].trim();
+                    if (!title.isEmpty() && !link.isEmpty()) {
+                        episodes.add(new EpisodeItem(title, link));
+                    }
                 }
-                if (urlInput != null && !output.isEmpty()) {
-                    urlInput.setText(output);
-                    urlInput.setSelection(urlInput.getText().length());
-                    setStatus("Link selected from web content");
-                }
-            });
+            }
+
+            if (!episodes.isEmpty()) {
+                renderEpisodeButtons(episodes);
+                return;
+            }
+        }
+
+        // Single link fallback
+        hideEpisodeButtons();
+        if (urlInput != null && !clean.isEmpty()) {
+            urlInput.setText(clean);
+            urlInput.setSelection(urlInput.getText().length());
+            setStatus("Link selected from web content");
+        }
+    }
+
+    private void renderEpisodeButtons(List<EpisodeItem> episodes) {
+        if (episodesContainer == null || episodesScroll == null) return;
+
+        episodesContainer.removeAllViews();
+        episodeButtonViews.clear();
+
+        for (int i = 0; i < episodes.size(); i++) {
+            final int index = i;
+            final EpisodeItem item = episodes.get(i);
+
+            TextView btn = new TextView(this);
+            btn.setText(item.title);
+            btn.setTextSize(12);
+            btn.setTypeface(null, android.graphics.Typeface.BOLD);
+            btn.setGravity(Gravity.CENTER);
+            btn.setPadding(dp(14), dp(8), dp(14), dp(8));
+            btn.setClickable(true);
+            btn.setFocusable(true);
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+            lp.rightMargin = dp(8);
+            btn.setLayoutParams(lp);
+
+            btn.setOnClickListener(v -> selectEpisode(episodes, index));
+
+            episodesContainer.addView(btn);
+            episodeButtonViews.add(btn);
+        }
+
+        episodesScroll.setVisibility(View.VISIBLE);
+
+        // Select the first episode by default and output its URL
+        selectEpisode(episodes, 0);
+    }
+
+    private void selectEpisode(List<EpisodeItem> episodes, int selectedIndex) {
+        if (selectedIndex < 0 || selectedIndex >= episodes.size()) return;
+
+        EpisodeItem selectedItem = episodes.get(selectedIndex);
+
+        // Highlight selected button, dim others
+        for (int i = 0; i < episodeButtonViews.size(); i++) {
+            TextView btn = episodeButtonViews.get(i);
+            boolean isSelected = (i == selectedIndex);
+
+            GradientDrawable gd = new GradientDrawable();
+            gd.setCornerRadius(dp(14));
+            gd.setColor(isSelected ? PRIMARY_COLOR : BUTTON_COLOR);
+            btn.setBackground(gd);
+            btn.setTextColor(isSelected ? Color.WHITE : Color.rgb(200, 210, 225));
+        }
+
+        // Put URL into urlInput
+        if (urlInput != null) {
+            urlInput.setText(selectedItem.url);
+            urlInput.setSelection(urlInput.getText().length());
+        }
+
+        setStatus("Selected: " + selectedItem.title);
+    }
+
+    private void hideEpisodeButtons() {
+        if (episodesContainer != null) {
+            episodesContainer.removeAllViews();
+        }
+        episodeButtonViews.clear();
+        if (episodesScroll != null) {
+            episodesScroll.setVisibility(View.GONE);
         }
     }
 
