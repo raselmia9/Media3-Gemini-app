@@ -2173,7 +2173,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void filterWebView(String query) {
         if (eventWebView == null) return;
-        String cleanQuery = (query != null) ? query.replace("\", "\\").replace("'", "\'").trim() : "";
+        String cleanQuery = (query != null) ? query.replace("\\", "\\\\").replace("'", "\\'").trim() : "";
         String js = "if (typeof filterMatches === 'function') { filterMatches('" + cleanQuery + "'); }";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             eventWebView.evaluateJavascript(js, null);
