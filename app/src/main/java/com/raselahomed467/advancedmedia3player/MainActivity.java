@@ -31,6 +31,9 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
@@ -86,7 +89,11 @@ public class MainActivity extends AppCompatActivity {
     private PlayerView playerView;
 
     private LinearLayout rootLayout;
+    private LinearLayout topBarLayout;
     private TextView titleBar;
+    private EditText searchEditText;
+    private TextView searchToggleBtn;
+    private boolean isSearchOpen = false;
     private LinearLayout inputScroll;
     private WebView eventWebView;
     private Thread htmlLoadThread;
@@ -213,7 +220,9 @@ public class MainActivity extends AppCompatActivity {
                 new OnBackPressedCallback(true) {
                     @Override
                     public void handleOnBackPressed() {
-                        if (fullscreen) {
+                        if (isSearchOpen) {
+                            closeSearch();
+                        } else if (fullscreen) {
                             toggleFullscreen();
                         } else {
                             finish();
@@ -233,15 +242,76 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.setOrientation(LinearLayout.VERTICAL);
         rootLayout.setBackgroundColor(BG_COLOR);
 
-        // Title Bar
+        // Top Bar (Horizontal: App Title / Search Input + Search/Close Toggle Button)
+        topBarLayout = new LinearLayout(this);
+        topBarLayout.setOrientation(LinearLayout.HORIZONTAL);
+        topBarLayout.setGravity(Gravity.CENTER_VERTICAL);
+        topBarLayout.setPadding(dp(16), dp(6), dp(16), dp(6));
+
+        // 1. App Title (RasVibe)
         titleBar = new TextView(this);
         titleBar.setText("RasVibe");
         titleBar.setTextColor(Color.WHITE);
         titleBar.setTextSize(18);
         titleBar.setGravity(Gravity.CENTER_VERTICAL);
-        titleBar.setPadding(dp(16), dp(12), dp(16), dp(12));
         titleBar.setTypeface(null, android.graphics.Typeface.BOLD);
-        rootLayout.addView(titleBar, new LinearLayout.LayoutParams(-1, dp(52)));
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        topBarLayout.addView(titleBar, titleParams);
+
+        // 2. Search EditText (Hidden by default, shown when search toggle is clicked)
+        searchEditText = new EditText(this);
+        searchEditText.setHint("Search movies, matches...");
+        searchEditText.setHintTextColor(Color.argb(130, 255, 255, 255));
+        searchEditText.setTextColor(Color.WHITE);
+        searchEditText.setTextSize(15);
+        searchEditText.setSingleLine(true);
+        searchEditText.setVisibility(View.GONE);
+
+        GradientDrawable searchBg = new GradientDrawable();
+        searchBg.setColor(Color.argb(160, 30, 42, 58));
+        searchBg.setCornerRadius(dp(10));
+        searchBg.setStroke(dp(1), Color.argb(50, 255, 255, 255));
+        searchEditText.setBackground(searchBg);
+        searchEditText.setPadding(dp(14), 0, dp(14), 0);
+
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(0, dp(38), 1f);
+        searchParams.rightMargin = dp(10);
+        topBarLayout.addView(searchEditText, searchParams);
+
+        // Realtime Web Search as user types
+        searchEditText.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filterWebView(s != null ? s.toString() : "");
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+
+        // 3. Search / Close Toggle Button on the far right
+        searchToggleBtn = new TextView(this);
+        searchToggleBtn.setText("🔍");
+        searchToggleBtn.setTextColor(Color.WHITE);
+        searchToggleBtn.setTextSize(18);
+        searchToggleBtn.setGravity(Gravity.CENTER);
+        searchToggleBtn.setFocusable(true);
+        searchToggleBtn.setClickable(true);
+
+        GradientDrawable toggleBg = new GradientDrawable();
+        toggleBg.setColor(Color.argb(160, 35, 48, 67));
+        toggleBg.setCornerRadius(dp(10));
+        searchToggleBtn.setBackground(toggleBg);
+
+        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        topBarLayout.addView(searchToggleBtn, toggleParams);
+
+        searchToggleBtn.setOnClickListener(v -> toggleSearch());
+
+        rootLayout.addView(topBarLayout, new LinearLayout.LayoutParams(-1, dp(52)));
 
         // Player Container
         playerContainer = new FrameLayout(this);
@@ -1648,7 +1718,7 @@ public class MainActivity extends AppCompatActivity {
         fullscreen = !fullscreen;
         if (fullscreen) {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-            titleBar.setVisibility(View.GONE);
+            if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
             playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1659,7 +1729,7 @@ public class MainActivity extends AppCompatActivity {
         } else {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
             applyFullscreenSystemUi(false);
-            titleBar.setVisibility(View.VISIBLE);
+            if (topBarLayout != null) topBarLayout.setVisibility(View.VISIBLE);
             inputScroll.setVisibility(View.VISIBLE);
             playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1812,7 +1882,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             // Immediately hide everything except video view
-            titleBar.setVisibility(View.GONE);
+            if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
             if (customControlsOverlay != null) {
                 customControlsOverlay.setVisibility(View.GONE);
@@ -1863,7 +1933,7 @@ public class MainActivity extends AppCompatActivity {
         fullscreen = wasFullscreenBeforePip;
         if (fullscreen) {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-            titleBar.setVisibility(View.GONE);
+            if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
             playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1872,7 +1942,7 @@ public class MainActivity extends AppCompatActivity {
             applyFullscreenSystemUi(true);
         } else {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-            titleBar.setVisibility(View.VISIBLE);
+            if (topBarLayout != null) topBarLayout.setVisibility(View.VISIBLE);
             inputScroll.setVisibility(View.VISIBLE);
             playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1890,7 +1960,7 @@ public class MainActivity extends AppCompatActivity {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
         if (isInPictureInPictureMode) {
             // Keep strictly video container visible in PiP
-            titleBar.setVisibility(View.GONE);
+            if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
             if (customControlsOverlay != null) {
                 customControlsOverlay.setVisibility(View.GONE);
@@ -2048,6 +2118,67 @@ public class MainActivity extends AppCompatActivity {
         episodeButtonViews.clear();
         if (episodesScroll != null) {
             episodesScroll.setVisibility(View.GONE);
+        }
+    }
+
+    // ==========================================
+    // TOP BAR SEARCH CONTROLS
+    // ==========================================
+
+    private void toggleSearch() {
+        if (isSearchOpen) {
+            closeSearch();
+        } else {
+            openSearch();
+        }
+    }
+
+    private void openSearch() {
+        isSearchOpen = true;
+        if (titleBar != null) if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
+        if (searchEditText != null) {
+            searchEditText.setVisibility(View.VISIBLE);
+            searchEditText.requestFocus();
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.showSoftInput(searchEditText, InputMethodManager.SHOW_IMPLICIT);
+            }
+        }
+        if (searchToggleBtn != null) {
+            searchToggleBtn.setText("✕");
+            searchToggleBtn.setTextSize(16);
+        }
+    }
+
+    private void closeSearch() {
+        isSearchOpen = false;
+        if (searchEditText != null) {
+            searchEditText.setText("");
+            searchEditText.clearFocus();
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.hideSoftInputFromWindow(searchEditText.getWindowToken(), 0);
+            }
+            searchEditText.setVisibility(View.GONE);
+        }
+        if (titleBar != null) {
+            if (topBarLayout != null) topBarLayout.setVisibility(View.VISIBLE);
+        }
+        if (searchToggleBtn != null) {
+            searchToggleBtn.setText("🔍");
+            searchToggleBtn.setTextSize(18);
+        }
+        filterWebView("");
+    }
+
+    private void filterWebView(String query) {
+        if (eventWebView == null) return;
+        String cleanQuery = (query != null) ? query.replace("\", "\\").replace("'", "\'").trim() : "";
+        String js = "if (typeof filterMatches === 'function') { filterMatches('" + cleanQuery + "'); }";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            eventWebView.evaluateJavascript(js, null);
+        } else {
+            eventWebView.loadUrl("javascript:" + js);
         }
     }
 
