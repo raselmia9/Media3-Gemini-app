@@ -1,6 +1,7 @@
 package com.raselahomed467.advancedmedia3player;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Typeface;
 
 import android.provider.Settings;
@@ -107,6 +108,11 @@ public class MainActivity extends AppCompatActivity {
     private TextView timeCurrent;
     private TextView timeDuration;
     private ProgressBar bufferingProgress;
+
+    // Splash Screen & Deep Link
+    private FrameLayout splashLayout;
+    private boolean isSplashDismissed = false;
+    private final Runnable splashDismissRunnable = this::dismissSplashScreen;
 
     // Gesture detection & Center HUD
     private GestureDetector gestureDetector;
@@ -215,12 +221,16 @@ public class MainActivity extends AppCompatActivity {
 
         handler.post(updateProgressRunnable);
 
+        handleIncomingIntent(getIntent());
+
         getOnBackPressedDispatcher().addCallback(
                 this,
                 new OnBackPressedCallback(true) {
                     @Override
                     public void handleOnBackPressed() {
-                        if (isSearchOpen) {
+                        if (splashLayout != null && splashLayout.getVisibility() == View.VISIBLE && !isSplashDismissed) {
+                            dismissSplashScreen();
+                        } else if (isSearchOpen) {
                             closeSearch();
                         } else if (fullscreen) {
                             toggleFullscreen();
@@ -238,6 +248,13 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
         );
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
     }
 
     // ==========================================
@@ -443,7 +460,18 @@ public class MainActivity extends AppCompatActivity {
         loadEventHtml();
 
         rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.70f));
-        setContentView(rootLayout);
+
+        FrameLayout mainAppContainer = new FrameLayout(this);
+        mainAppContainer.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        mainAppContainer.addView(rootLayout, new FrameLayout.LayoutParams(-1, -1));
+
+        buildSplashScreen(mainAppContainer);
+
+        setContentView(mainAppContainer);
+        scheduleSplashDismiss();
     }
 
     // ==========================================
@@ -1975,6 +2003,9 @@ public class MainActivity extends AppCompatActivity {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
         if (isInPictureInPictureMode) {
             // Keep strictly video container visible in PiP
+            if (splashLayout != null) {
+                splashLayout.setVisibility(View.GONE);
+            }
             if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
             inputScroll.setVisibility(View.GONE);
             if (customControlsOverlay != null) {
@@ -2275,11 +2306,199 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // ==========================================
+    // SPLASH SCREEN & DEEP LINK INTENT HANDLING
+    // ==========================================
+
+    private void buildSplashScreen(FrameLayout container) {
+        splashLayout = new FrameLayout(this);
+        splashLayout.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+        splashLayout.setClickable(true);
+        splashLayout.setFocusable(true);
+
+        // Elegant dark gradient background matching screenshot
+        GradientDrawable splashBg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{
+                        Color.rgb(12, 16, 28),
+                        Color.rgb(8, 11, 20),
+                        Color.rgb(4, 6, 12)
+                }
+        );
+        splashLayout.setBackground(splashBg);
+
+        // Center group: App Icon, Title, Subtitle, Progress Bar
+        LinearLayout centerGroup = new LinearLayout(this);
+        centerGroup.setOrientation(LinearLayout.VERTICAL);
+        centerGroup.setGravity(Gravity.CENTER_HORIZONTAL);
+        FrameLayout.LayoutParams centerParams = new FrameLayout.LayoutParams(-2, -2);
+        centerParams.gravity = Gravity.CENTER;
+        splashLayout.addView(centerGroup, centerParams);
+
+        // 1. App Icon Card (Squircle / Rounded White Container)
+        FrameLayout iconCard = new FrameLayout(this);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(108), dp(108));
+        cardParams.bottomMargin = dp(20);
+        iconCard.setLayoutParams(cardParams);
+
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(Color.WHITE);
+        cardBg.setCornerRadius(dp(28));
+        iconCard.setBackground(cardBg);
+
+        ImageView appIconView = new ImageView(this);
+        int iconRes = getResources().getIdentifier("app_icon", "drawable", getPackageName());
+        if (iconRes == 0) {
+            iconRes = getApplicationInfo().icon;
+        }
+        if (iconRes != 0) {
+            appIconView.setImageResource(iconRes);
+        }
+        appIconView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(76), dp(76));
+        iconParams.gravity = Gravity.CENTER;
+        iconCard.addView(appIconView, iconParams);
+
+        centerGroup.addView(iconCard);
+
+        // 2. App Name: "RasVibe"
+        TextView splashTitle = new TextView(this);
+        splashTitle.setText("RasVibe");
+        splashTitle.setTextColor(Color.WHITE);
+        splashTitle.setTextSize(26);
+        splashTitle.setTypeface(null, Typeface.BOLD);
+        splashTitle.setGravity(Gravity.CENTER);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            splashTitle.setLetterSpacing(0.02f);
+        }
+        centerGroup.addView(splashTitle, new LinearLayout.LayoutParams(-2, -2));
+
+        // 3. Subtitle / Tagline: "Stream More. Watch Better."
+        TextView splashSubtitle = new TextView(this);
+        splashSubtitle.setText("Stream More. Watch Better.");
+        splashSubtitle.setTextColor(Color.argb(200, 180, 195, 215));
+        splashSubtitle.setTextSize(14);
+        splashSubtitle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-2, -2);
+        subtitleParams.topMargin = dp(8);
+        centerGroup.addView(splashSubtitle, subtitleParams);
+
+        // 4. Stylish Circular Progress Bar
+        ProgressBar splashProgressBar = new ProgressBar(this);
+        splashProgressBar.setIndeterminate(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            splashProgressBar.setIndeterminateTintList(
+                    ColorStateList.valueOf(Color.rgb(85, 194, 255))
+            );
+        }
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(36), dp(36));
+        progressParams.topMargin = dp(42);
+        centerGroup.addView(splashProgressBar, progressParams);
+
+        // Bottom footer layout (Version & Thank you note)
+        LinearLayout bottomGroup = new LinearLayout(this);
+        bottomGroup.setOrientation(LinearLayout.VERTICAL);
+        bottomGroup.setGravity(Gravity.CENTER_HORIZONTAL);
+        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(-2, -2);
+        bottomParams.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        bottomParams.bottomMargin = dp(36);
+        splashLayout.addView(bottomGroup, bottomParams);
+
+        // Version text
+        TextView versionText = new TextView(this);
+        versionText.setText("VERSION 1.0");
+        versionText.setTextColor(Color.argb(230, 255, 255, 255));
+        versionText.setTextSize(12);
+        versionText.setTypeface(null, Typeface.BOLD);
+        versionText.setGravity(Gravity.CENTER);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            versionText.setLetterSpacing(0.08f);
+        }
+        bottomGroup.addView(versionText, new LinearLayout.LayoutParams(-2, -2));
+
+        // Thank you text
+        TextView thanksText = new TextView(this);
+        thanksText.setText("Thank you for choosing RasVibe");
+        thanksText.setTextColor(Color.argb(160, 160, 175, 195));
+        thanksText.setTextSize(12);
+        thanksText.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams thanksParams = new LinearLayout.LayoutParams(-2, -2);
+        thanksParams.topMargin = dp(6);
+        bottomGroup.addView(thanksText, thanksParams);
+
+        // Allow user to tap anywhere to dismiss instantly
+        splashLayout.setOnClickListener(v -> dismissSplashScreen());
+
+        container.addView(splashLayout);
+    }
+
+    private void scheduleSplashDismiss() {
+        handler.postDelayed(splashDismissRunnable, 2400);
+    }
+
+    private void dismissSplashScreen() {
+        if (isSplashDismissed || splashLayout == null) return;
+        isSplashDismissed = true;
+        handler.removeCallbacks(splashDismissRunnable);
+        splashLayout.animate()
+                .alpha(0f)
+                .setDuration(450)
+                .withEndAction(() -> {
+                    if (splashLayout != null) {
+                        splashLayout.setVisibility(View.GONE);
+                    }
+                })
+                .start();
+    }
+
+    private void handleIncomingIntent(Intent intent) {
+        if (intent == null) return;
+        String streamUrl = null;
+        Uri data = intent.getData();
+        if (data != null) {
+            streamUrl = data.toString();
+        } else if (Intent.ACTION_SEND.equals(intent.getAction()) && "text/plain".equals(intent.getType())) {
+            String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
+            if (sharedText != null) {
+                String trimmed = sharedText.trim();
+                if (trimmed.startsWith("http://") || trimmed.startsWith("https://")
+                        || trimmed.startsWith("rtsp://") || trimmed.startsWith("rtmp://")
+                        || trimmed.startsWith("content://") || trimmed.startsWith("file://")) {
+                    streamUrl = trimmed;
+                }
+            }
+        }
+
+        if (streamUrl != null && !streamUrl.trim().isEmpty()) {
+            final String finalUrl = streamUrl.trim();
+            dismissSplashScreen();
+            runOnUiThread(() -> playStreamWithUrl(finalUrl));
+        }
+    }
+
+    private void playStreamWithUrl(String streamUrl) {
+        if (streamUrl == null || streamUrl.trim().isEmpty()) return;
+        hideEpisodeButtons();
+        String cleanUrl = streamUrl.trim();
+        if (urlInput != null) {
+            urlInput.setText(cleanUrl);
+            urlInput.setSelection(urlInput.getText().length());
+        }
+        setStatus("Playing external stream");
+        if (playerContainer != null) {
+            playerContainer.setVisibility(View.VISIBLE);
+        }
+        playStream();
+    }
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
 
         handler.removeCallbacksAndMessages(null);
+        if (splashDismissRunnable != null) {
+            handler.removeCallbacks(splashDismissRunnable);
+        }
 
         if (htmlLoadThread != null) {
             htmlLoadThread.interrupt();
