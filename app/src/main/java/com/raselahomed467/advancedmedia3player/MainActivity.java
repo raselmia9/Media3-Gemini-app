@@ -3,6 +3,8 @@ package com.raselahomed467.advancedmedia3player;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Typeface;
+import android.graphics.Outline;
+import android.view.ViewOutlineProvider;
 
 import android.provider.Settings;
 import android.media.AudioManager;
@@ -126,6 +128,12 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar bufferingProgress;
 
     // Splash Screen & Deep Link
+    // In-App Miniplayer (Floating PiP inside app)
+    private FrameLayout mainAppContainer;
+    private FrameLayout miniControlsOverlay;
+    private TextView btnMiniPlayPause;
+    private boolean isMiniPlayerActive = false;
+
     private FrameLayout splashLayout;
     private boolean isSplashDismissed = false;
     private long splashStartTime = 0;
@@ -200,6 +208,9 @@ public class MainActivity extends AppCompatActivity {
                 if (btnPlayPause != null) {
                     btnPlayPause.setText(player.isPlaying() ? "❚❚" : "▶");
                 }
+                if (btnMiniPlayPause != null) {
+                    btnMiniPlayPause.setText(player.isPlaying() ? "❚❚" : "▶");
+                }
             }
             handler.postDelayed(this, 800);
         }
@@ -249,16 +260,19 @@ public class MainActivity extends AppCompatActivity {
                             dismissSplashScreen();
                         } else if (isSearchOpen) {
                             closeSearch();
-                        } else if (isPlaylistViewActive) {
-                            // Close playlist tab and reveal the existing home WebView without reloading it.
-                            closePlaylistTab();
-                        } else if (player != null && playerContainer != null
-                                && playerContainer.getVisibility() == View.VISIBLE
-                                && (player.isPlaying() || player.getPlayWhenReady())) {
-                            // YouTube-style: use Back to enter PiP while a video is active.
-                            enterPictureInPicture();
                         } else if (fullscreen) {
                             toggleFullscreen();
+                        } else if (!isMiniPlayerActive && player != null && playerContainer != null
+                                && playerContainer.getVisibility() == View.VISIBLE
+                                && (player.isPlaying() || player.getPlayWhenReady())) {
+                            // YouTube-style In-App Miniplayer: Back shrinks video to floating miniplayer without minimizing the app!
+                            enterInAppMiniPlayer();
+                        } else if (isPlaylistViewActive) {
+                            // Close playlist tab and return to Home (mini player stays playing if active!)
+                            closePlaylistTab();
+                        } else if (isMiniPlayerActive) {
+                            // Back while in miniplayer on Home -> close the miniplayer
+                            closeMiniPlayer();
                         } else if (playerContainer != null && playerContainer.getVisibility() == View.VISIBLE) {
                             if (player != null) {
                                 player.stop();
@@ -398,6 +412,9 @@ public class MainActivity extends AppCompatActivity {
         buildCustomControls();
         playerContainer.addView(customControlsOverlay, new FrameLayout.LayoutParams(-1, -1));
 
+        // In-App Miniplayer Controls Overlay
+        buildMiniControls();
+
         // Center Gesture Notification HUD
         buildGestureHud();
         playerContainer.addView(gestureHudCard, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
@@ -508,7 +525,7 @@ public class MainActivity extends AppCompatActivity {
 
         rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.70f));
 
-        FrameLayout mainAppContainer = new FrameLayout(this);
+        mainAppContainer = new FrameLayout(this);
         mainAppContainer.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -560,7 +577,7 @@ public class MainActivity extends AppCompatActivity {
         buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
 
         // 1. Picture in Picture (PiP) Mode Icon (using picture_in_picture.png)
-        addControllerIconButton(buttonsRow, "picture_in_picture", "▣", "Picture in Picture", this::enterPictureInPicture);
+        addControllerIconButton(buttonsRow, "picture_in_picture", "▣", "Mini Player", this::toggleInAppMiniPlayer);
 
         // 2. Rewind 10s
         addControllerButton(buttonsRow, "◀◀", "Rewind 10s", this::rewind10s);
@@ -1358,6 +1375,16 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        if (isMiniPlayerActive) {
+            exitInAppMiniPlayer();
+        }
+        if (playerContainer != null) {
+            playerContainer.setVisibility(View.VISIBLE);
+        }
+        if (inputScroll != null && !isMiniPlayerActive) {
+            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.70f));
+        }
+
         try {
 
             OkHttpClient client =
@@ -1923,6 +1950,319 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
+    // IN-APP MINIPLAYER (FLOATING OVER DISPLAY)
+    // ==========================================
+
+    private void buildMiniControls() {
+        miniControlsOverlay = new FrameLayout(this);
+        miniControlsOverlay.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+        miniControlsOverlay.setVisibility(View.GONE);
+
+        // Dark gradient vignette for readability
+        GradientDrawable vignette = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.argb(160, 0, 0, 0), Color.argb(40, 0, 0, 0), Color.argb(180, 0, 0, 0)}
+        );
+        miniControlsOverlay.setBackground(vignette);
+
+        // Top bar: Expand button on left, Close button on right
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setPadding(dp(6), dp(6), dp(6), 0);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView btnMiniExpand = new TextView(this);
+        btnMiniExpand.setText("⛶");
+        btnMiniExpand.setTextColor(Color.WHITE);
+        btnMiniExpand.setTextSize(14);
+        btnMiniExpand.setGravity(Gravity.CENTER);
+        GradientDrawable expBg = new GradientDrawable();
+        expBg.setColor(Color.argb(160, 20, 28, 42));
+        expBg.setCornerRadius(dp(14));
+        btnMiniExpand.setBackground(expBg);
+        btnMiniExpand.setOnClickListener(v -> exitInAppMiniPlayer());
+        topBar.addView(btnMiniExpand, new LinearLayout.LayoutParams(dp(28), dp(28)));
+
+        View spacer = new View(this);
+        topBar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+
+        TextView btnMiniClose = new TextView(this);
+        btnMiniClose.setText("✕");
+        btnMiniClose.setTextColor(Color.WHITE);
+        btnMiniClose.setTextSize(13);
+        btnMiniClose.setGravity(Gravity.CENTER);
+        GradientDrawable closeBg = new GradientDrawable();
+        closeBg.setColor(Color.argb(190, 220, 38, 38));
+        closeBg.setCornerRadius(dp(14));
+        btnMiniClose.setBackground(closeBg);
+        btnMiniClose.setOnClickListener(v -> closeMiniPlayer());
+        topBar.addView(btnMiniClose, new LinearLayout.LayoutParams(dp(28), dp(28)));
+
+        miniControlsOverlay.addView(topBar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+
+        // Center Play/Pause button
+        btnMiniPlayPause = new TextView(this);
+        btnMiniPlayPause.setText("❚❚");
+        btnMiniPlayPause.setTextColor(Color.WHITE);
+        btnMiniPlayPause.setTextSize(16);
+        btnMiniPlayPause.setGravity(Gravity.CENTER);
+        GradientDrawable playBg = new GradientDrawable();
+        playBg.setColor(Color.argb(180, 18, 24, 38));
+        playBg.setCornerRadius(dp(20));
+        playBg.setStroke(dp(1), Color.argb(130, 255, 255, 255));
+        btnMiniPlayPause.setBackground(playBg);
+        btnMiniPlayPause.setOnClickListener(v -> {
+            if (player != null) {
+                if (player.isPlaying()) {
+                    player.pause();
+                    btnMiniPlayPause.setText("▶");
+                } else {
+                    player.play();
+                    btnMiniPlayPause.setText("❚❚");
+                }
+            }
+        });
+        FrameLayout.LayoutParams playParams = new FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER);
+        miniControlsOverlay.addView(btnMiniPlayPause, playParams);
+
+        // Touch & Drag handler for the miniplayer overlay
+        miniControlsOverlay.setOnTouchListener(new View.OnTouchListener() {
+            private float downX, downY;
+            private float startTranslationX, startTranslationY;
+            private boolean isDragging = false;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                // If touch hits close, expand or play/pause button, do not intercept
+                Rect rect = new Rect();
+                btnMiniClose.getGlobalVisibleRect(rect);
+                if (rect.contains((int) event.getRawX(), (int) event.getRawY())) {
+                    return false;
+                }
+                btnMiniExpand.getGlobalVisibleRect(rect);
+                if (rect.contains((int) event.getRawX(), (int) event.getRawY())) {
+                    return false;
+                }
+                btnMiniPlayPause.getGlobalVisibleRect(rect);
+                if (rect.contains((int) event.getRawX(), (int) event.getRawY())) {
+                    return false;
+                }
+
+                switch (event.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downX = event.getRawX();
+                        downY = event.getRawY();
+                        startTranslationX = playerContainer.getTranslationX();
+                        startTranslationY = playerContainer.getTranslationY();
+                        isDragging = false;
+                        return true;
+
+                    case MotionEvent.ACTION_MOVE:
+                        float dx = event.getRawX() - downX;
+                        float dy = event.getRawY() - downY;
+                        if (Math.abs(dx) > dp(8) || Math.abs(dy) > dp(8)) {
+                            isDragging = true;
+                        }
+                        if (isDragging) {
+                            playerContainer.setTranslationX(startTranslationX + dx);
+                            playerContainer.setTranslationY(startTranslationY + dy);
+                        }
+                        return true;
+
+                    case MotionEvent.ACTION_UP:
+                        if (!isDragging) {
+                            exitInAppMiniPlayer();
+                        }
+                        return true;
+                }
+                return false;
+            }
+        });
+
+        playerContainer.addView(miniControlsOverlay, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void toggleInAppMiniPlayer() {
+        if (isMiniPlayerActive) {
+            exitInAppMiniPlayer();
+        } else {
+            enterInAppMiniPlayer();
+        }
+    }
+
+    private void enterInAppMiniPlayer() {
+        if (isMiniPlayerActive || playerContainer == null || mainAppContainer == null) {
+            return;
+        }
+
+        if (fullscreen) {
+            toggleFullscreen();
+        }
+
+        isMiniPlayerActive = true;
+
+        // Reset any prior translation from dragging
+        playerContainer.setTranslationX(0);
+        playerContainer.setTranslationY(0);
+
+        // Hide full controls and gesture HUD
+        hideControls();
+        if (customControlsOverlay != null) {
+            customControlsOverlay.setVisibility(View.GONE);
+        }
+        if (gestureHudCard != null) {
+            gestureHudCard.setVisibility(View.GONE);
+        }
+
+        // Show mini controls overlay
+        if (miniControlsOverlay != null) {
+            miniControlsOverlay.setVisibility(View.VISIBLE);
+        }
+
+        // Apply rounded card styling and elevation
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            GradientDrawable miniBg = new GradientDrawable();
+            miniBg.setColor(Color.BLACK);
+            miniBg.setCornerRadius(dp(12));
+            miniBg.setStroke(dp(1), Color.argb(90, 255, 255, 255));
+            playerContainer.setBackground(miniBg);
+            playerContainer.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(12));
+                }
+            });
+            playerContainer.setClipToOutline(true);
+            playerContainer.setElevation(dp(10));
+        }
+
+        // Detach from rootLayout
+        if (playerContainer.getParent() != null) {
+            ((ViewGroup) playerContainer.getParent()).removeView(playerContainer);
+        }
+
+        // In rootLayout, inputScroll takes full remaining height below topBar
+        if (inputScroll != null) {
+            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1.0f));
+        }
+
+        // Float at bottom-right inside mainAppContainer
+        int miniW = dp(210);
+        int miniH = dp(118);
+        FrameLayout.LayoutParams miniParams = new FrameLayout.LayoutParams(miniW, miniH, Gravity.BOTTOM | Gravity.END);
+        miniParams.rightMargin = dp(16);
+        miniParams.bottomMargin = dp(24);
+        playerContainer.setLayoutParams(miniParams);
+
+        mainAppContainer.addView(playerContainer, miniParams);
+        playerContainer.setVisibility(View.VISIBLE);
+
+        setStatus("Mini Player active");
+    }
+
+    private void exitInAppMiniPlayer() {
+        if (!isMiniPlayerActive || playerContainer == null || rootLayout == null) {
+            return;
+        }
+
+        isMiniPlayerActive = false;
+
+        // Reset translation
+        playerContainer.setTranslationX(0);
+        playerContainer.setTranslationY(0);
+
+        // Hide mini controls
+        if (miniControlsOverlay != null) {
+            miniControlsOverlay.setVisibility(View.GONE);
+        }
+
+        // Restore normal background and clear elevation
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            playerContainer.setBackgroundColor(Color.BLACK);
+            playerContainer.setOutlineProvider(null);
+            playerContainer.setClipToOutline(false);
+            playerContainer.setElevation(0);
+        }
+
+        // Detach from mainAppContainer
+        if (playerContainer.getParent() != null) {
+            ((ViewGroup) playerContainer.getParent()).removeView(playerContainer);
+        }
+
+        // Re-attach into rootLayout at index 1 (between topBarLayout and inputScroll)
+        LinearLayout.LayoutParams normalParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.30f
+        );
+        playerContainer.setLayoutParams(normalParams);
+
+        int targetIndex = 1;
+        if (rootLayout.getChildCount() < 1) {
+            targetIndex = 0;
+        } else if (targetIndex > rootLayout.getChildCount()) {
+            targetIndex = rootLayout.getChildCount();
+        }
+        rootLayout.addView(playerContainer, targetIndex, normalParams);
+
+        // Restore inputScroll weight to 0.70f
+        if (inputScroll != null) {
+            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.70f));
+        }
+
+        if (customControlsOverlay != null) {
+            customControlsOverlay.setVisibility(View.VISIBLE);
+        }
+
+        playerContainer.setVisibility(View.VISIBLE);
+        resetAutoHide();
+        setStatus("Normal Mode");
+    }
+
+    private void closeMiniPlayer() {
+        if (player != null) {
+            player.stop();
+        }
+
+        if (isMiniPlayerActive) {
+            isMiniPlayerActive = false;
+            playerContainer.setTranslationX(0);
+            playerContainer.setTranslationY(0);
+
+            if (miniControlsOverlay != null) {
+                miniControlsOverlay.setVisibility(View.GONE);
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                playerContainer.setBackgroundColor(Color.BLACK);
+                playerContainer.setOutlineProvider(null);
+                playerContainer.setClipToOutline(false);
+                playerContainer.setElevation(0);
+            }
+
+            if (playerContainer.getParent() != null) {
+                ((ViewGroup) playerContainer.getParent()).removeView(playerContainer);
+            }
+
+            // Put back into rootLayout hidden so view hierarchy is consistent
+            LinearLayout.LayoutParams normalParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.30f
+            );
+            int targetIndex = Math.min(1, rootLayout.getChildCount());
+            rootLayout.addView(playerContainer, targetIndex, normalParams);
+        }
+
+        if (playerContainer != null) {
+            playerContainer.setVisibility(View.GONE);
+        }
+
+        if (inputScroll != null) {
+            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1.0f));
+        }
+
+        hideEpisodeButtons();
+        setStatus("Player closed");
+    }
+
+    // ==========================================
     // PICTURE IN PICTURE (VIDEO LAYOUT ONLY)
     // ==========================================
 
@@ -2126,11 +2466,15 @@ public class MainActivity extends AppCompatActivity {
                 urlInput.setSelection(urlInput.getText().length());
             }
             hideEpisodeButtons();
-            if (player != null && player.isPlaying()) {
-                player.stop();
-            }
-            if (playerContainer != null) {
-                playerContainer.setVisibility(View.GONE);
+            // Video does NOT stop and does NOT hide. If active, it shrinks into the In-App Miniplayer!
+            if (player != null && (player.isPlaying() || player.getPlayWhenReady())) {
+                if (!isMiniPlayerActive) {
+                    enterInAppMiniPlayer();
+                }
+            } else {
+                if (playerContainer != null) {
+                    playerContainer.setVisibility(View.GONE);
+                }
             }
             loadPlaylistHtml(targetUrl);
             return;
@@ -2237,11 +2581,14 @@ public class MainActivity extends AppCompatActivity {
                 urlInput.setSelection(urlInput.getText().length());
             }
             setStatus("Selected: " + selectedItem.title);
-            if (player != null && player.isPlaying()) {
-                player.stop();
-            }
-            if (playerContainer != null) {
-                playerContainer.setVisibility(View.GONE);
+            if (player != null && (player.isPlaying() || player.getPlayWhenReady())) {
+                if (!isMiniPlayerActive) {
+                    enterInAppMiniPlayer();
+                }
+            } else {
+                if (playerContainer != null) {
+                    playerContainer.setVisibility(View.GONE);
+                }
             }
             loadPlaylistHtml(targetUrl);
             return;
