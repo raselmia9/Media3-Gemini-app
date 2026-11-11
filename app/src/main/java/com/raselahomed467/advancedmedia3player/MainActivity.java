@@ -189,7 +189,7 @@ public class MainActivity extends AppCompatActivity {
     private final List<TextView> episodeButtonViews = new ArrayList<>();
 
     private boolean fullscreen = false;
-    private int resizeMode = 0;
+    private int resizeMode = 1; // default: FILL so video covers the whole player
 
     private boolean isControlsVisible = true;
     private boolean isUserSeeking = false;
@@ -368,9 +368,7 @@ public class MainActivity extends AppCompatActivity {
 
         // 3. Search / Close Toggle Button on the far right
         searchToggleBtn = new TextView(this);
-        searchToggleBtn.setText("🔍");
         searchToggleBtn.setTextColor(Color.WHITE);
-        searchToggleBtn.setTextSize(18);
         searchToggleBtn.setGravity(Gravity.CENTER);
         searchToggleBtn.setFocusable(true);
         searchToggleBtn.setClickable(true);
@@ -379,6 +377,7 @@ public class MainActivity extends AppCompatActivity {
         toggleBg.setColor(Color.argb(160, 35, 48, 67));
         toggleBg.setCornerRadius(dp(10));
         searchToggleBtn.setBackground(toggleBg);
+        applySearchToggleIcon(false);
 
         LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(40), dp(40));
         topBarLayout.addView(searchToggleBtn, toggleParams);
@@ -397,7 +396,7 @@ public class MainActivity extends AppCompatActivity {
         playerView = new PlayerView(this);
         // Disable ExoPlayer default built-in controls completely
         playerView.setUseController(false);
-        playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);
         playerView.setBackgroundColor(Color.BLACK);
         playerView.setClickable(true);
         playerView.setOnClickListener(v -> toggleControls());
@@ -587,6 +586,9 @@ public class MainActivity extends AppCompatActivity {
 
         // 1. Picture in Picture (PiP) Mode Icon (using picture_in_picture.png)
         addControllerIconButton(buttonsRow, "picture_in_picture", "▣", "Mini Player", this::toggleInAppMiniPlayer);
+
+        // 1b. Playback speed (using speed.png), placed between PiP and Rewind
+        addControllerIconButton(buttonsRow, "speed", "⏱", "Playback speed", this::showSpeedDialog);
 
         // 2. Rewind 10s
         addControllerButton(buttonsRow, "◀◀", "Rewind 10s", this::rewind10s);
@@ -1802,6 +1804,14 @@ public class MainActivity extends AppCompatActivity {
     // VIDEO RESIZE
     // ==========================================
 
+    // Default / PiP video scaling: FILL so the video covers the whole player area
+    private void applyFillResizeMode() {
+        resizeMode = 1;
+        if (playerView != null) {
+            playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);
+        }
+    }
+
     private void cycleResizeMode() {
 
         if (playerView == null) return;
@@ -1944,16 +1954,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showPlayerSettings() {
-        String[] options = {"Audio tracks", "Subtitle tracks", "Video tracks", "Resize mode", "Playback speed"};
+        String[] options = {"Video resolution", "Audio tags", "Subtitle tracks"};
         new AlertDialog.Builder(this)
                 .setTitle("Player settings")
                 .setItems(options, (dialog, which) -> {
                     switch (which) {
-                        case 0: showTrackSelection(C.TRACK_TYPE_AUDIO, "Audio Tracks"); break;
-                        case 1: showTrackSelection(C.TRACK_TYPE_TEXT, "Subtitle Tracks"); break;
-                        case 2: showTrackSelection(C.TRACK_TYPE_VIDEO, "Video Tracks"); break;
-                        case 3: cycleResizeMode(); break;
-                        case 4: showSpeedDialog(); break;
+                        case 0: showTrackSelection(C.TRACK_TYPE_VIDEO, "Video Resolution"); break;
+                        case 1: showTrackSelection(C.TRACK_TYPE_AUDIO, "Audio Tags"); break;
+                        case 2: showTrackSelection(C.TRACK_TYPE_TEXT, "Subtitle Tracks"); break;
                     }
                 }).show();
     }
@@ -2408,6 +2416,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             wasMiniPlayerBeforePip = isMiniPlayerActive;
             wasFullscreenBeforePip = fullscreen;
+            applyFillResizeMode();
 
             // Reset orientation so PiP transitions cleanly
             if (fullscreen) {
@@ -2527,6 +2536,7 @@ public class MainActivity extends AppCompatActivity {
         if (isInPictureInPictureMode) {
             wasMiniPlayerBeforePip = isMiniPlayerActive;
             wasFullscreenBeforePip = fullscreen;
+            applyFillResizeMode();
 
             if (splashLayout != null) splashLayout.setVisibility(View.GONE);
             if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
@@ -2782,8 +2792,29 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         if (searchToggleBtn != null) {
+            applySearchToggleIcon(true);
+        }
+    }
+
+    // Shows search.png (drawable) when closed, and a ✕ text when open
+    private void applySearchToggleIcon(boolean isOpen) {
+        if (searchToggleBtn == null) return;
+        if (isOpen) {
+            searchToggleBtn.setCompoundDrawables(null, null, null, null);
             searchToggleBtn.setText("✕");
             searchToggleBtn.setTextSize(16);
+            return;
+        }
+        searchToggleBtn.setText("");
+        searchToggleBtn.setTextSize(18);
+        int resId = getResources().getIdentifier("search", "drawable", getPackageName());
+        if (resId != 0) {
+            Drawable icon = getResources().getDrawable(resId);
+            icon.setBounds(0, 0, dp(22), dp(22));
+            icon.setTint(Color.WHITE);
+            searchToggleBtn.setCompoundDrawables(icon, null, null, null);
+        } else {
+            searchToggleBtn.setText("🔍");
         }
     }
 
@@ -2802,8 +2833,7 @@ public class MainActivity extends AppCompatActivity {
             titleBar.setVisibility(View.VISIBLE);
         }
         if (searchToggleBtn != null) {
-            searchToggleBtn.setText("🔍");
-            searchToggleBtn.setTextSize(18);
+            applySearchToggleIcon(false);
         }
         filterWebView("");
     }
