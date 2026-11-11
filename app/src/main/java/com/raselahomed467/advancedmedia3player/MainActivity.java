@@ -97,6 +97,9 @@ public class MainActivity extends AppCompatActivity {
     private boolean isSearchOpen = false;
     private LinearLayout inputScroll;
     private WebView eventWebView;
+    private volatile String cachedPlaylistTemplate = null;
+    private volatile boolean isPlaylistViewActive = false;
+    private Thread playlistLoadThread = null;
     private Thread htmlLoadThread;
 
     private FrameLayout playerContainer;
@@ -112,6 +115,7 @@ public class MainActivity extends AppCompatActivity {
     // Splash Screen & Deep Link
     private FrameLayout splashLayout;
     private boolean isSplashDismissed = false;
+    private long splashStartTime = 0;
     private final Runnable splashDismissRunnable = this::dismissSplashScreen;
 
     // Gesture detection & Center HUD
@@ -240,6 +244,8 @@ public class MainActivity extends AppCompatActivity {
                             }
                             playerContainer.setVisibility(View.GONE);
                             hideEpisodeButtons();
+                        } else if (isPlaylistViewActive) {
+                            loadEventHtml();
                         } else if (eventWebView != null && eventWebView.canGoBack()) {
                             eventWebView.goBack();
                         } else {
@@ -451,7 +457,9 @@ public class MainActivity extends AppCompatActivity {
         eventWebView.setBackgroundColor(Color.rgb(13, 17, 23));
         eventWebView.setWebChromeClient(new WebChromeClient());
         eventWebView.setWebViewClient(new WebViewClient());
-        eventWebView.addJavascriptInterface(new HtmlItemBridge(), "CustomWebView");
+        HtmlItemBridge bridge = new HtmlItemBridge();
+        eventWebView.addJavascriptInterface(bridge, "CustomWebView");
+        eventWebView.addJavascriptInterface(bridge, "AppInventor");
 
         LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(-1, 0, 1f);
         webParams.setMargins(0, 0, 0, 0);
@@ -1292,8 +1300,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void playStream() {
 
+        String rawInput = value(urlInput);
+        if (rawInput.contains("Playlist>")) {
+            handleWebViewData(rawInput);
+            return;
+        }
+
         StreamConfig config =
-                parseStreamInput(value(urlInput));
+                parseStreamInput(rawInput);
 
         if (config.url.isEmpty()) {
             toast("প্রথমে Video URL দিন");
@@ -2056,9 +2070,25 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void handleWebViewData(String raw) {
+        if (raw == null) return;
         String clean = raw.trim();
-        if (clean.startsWith("Playlist>")) {
-            clean = clean.substring("Playlist>".length()).trim();
+
+        // Check if the link contains Playlist>
+        if (clean.contains("Playlist>")) {
+            String targetUrl = clean.replace("Playlist>", "").trim();
+            if (urlInput != null) {
+                urlInput.setText(targetUrl);
+                urlInput.setSelection(urlInput.getText().length());
+            }
+            hideEpisodeButtons();
+            if (player != null && player.isPlaying()) {
+                player.stop();
+            }
+            if (playerContainer != null) {
+                playerContainer.setVisibility(View.GONE);
+            }
+            loadPlaylistHtml(targetUrl);
+            return;
         }
 
         // Multi-link parsing: check for ,, and ,) separators
@@ -2154,9 +2184,27 @@ public class MainActivity extends AppCompatActivity {
             btn.setTextColor(isSelected ? Color.WHITE : Color.rgb(200, 210, 225));
         }
 
+        String itemUrl = (selectedItem.url != null) ? selectedItem.url.trim() : "";
+        if (itemUrl.contains("Playlist>")) {
+            String targetUrl = itemUrl.replace("Playlist>", "").trim();
+            if (urlInput != null) {
+                urlInput.setText(targetUrl);
+                urlInput.setSelection(urlInput.getText().length());
+            }
+            setStatus("Selected: " + selectedItem.title);
+            if (player != null && player.isPlaying()) {
+                player.stop();
+            }
+            if (playerContainer != null) {
+                playerContainer.setVisibility(View.GONE);
+            }
+            loadPlaylistHtml(targetUrl);
+            return;
+        }
+
         // Put URL into urlInput
         if (urlInput != null) {
-            urlInput.setText(selectedItem.url);
+            urlInput.setText(itemUrl);
             urlInput.setSelection(urlInput.getText().length());
         }
 
@@ -2243,6 +2291,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadEventHtml() {
+        isPlaylistViewActive = false;
         final String htmlUrl = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/EventCode.html";
         htmlLoadThread = new Thread(() -> {
             OkHttpClient client = new OkHttpClient();
@@ -2254,6 +2303,7 @@ public class MainActivity extends AppCompatActivity {
                 String html = response.body().string();
                 runOnUiThread(() -> {
                     if (eventWebView != null && !isFinishing()) {
+                        isPlaylistViewActive = false;
                         eventWebView.loadDataWithBaseURL(
                                 "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/",
                                 html,
@@ -2261,13 +2311,78 @@ public class MainActivity extends AppCompatActivity {
                                 "UTF-8",
                                 null
                         );
+                        onHtmlContentLoaded();
                     }
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> setStatus("Could not load web content: " + e.getMessage()));
+                runOnUiThread(() -> {
+                    setStatus("Could not load web content: " + e.getMessage());
+                    dismissSplashScreen();
+                });
+            }
+
+            // Pre-fetch Playlist.html template in background for instant loading on click
+            if (cachedPlaylistTemplate == null) {
+                try {
+                    Request plRequest = new Request.Builder()
+                            .url("https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/Playlist.html")
+                            .build();
+                    try (Response plResp = client.newCall(plRequest).execute()) {
+                        if (plResp.isSuccessful() && plResp.body() != null) {
+                            cachedPlaylistTemplate = plResp.body().string();
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
             }
         }, "event-html-loader");
         htmlLoadThread.start();
+    }
+
+    private void loadPlaylistHtml(final String targetUrl) {
+        setStatus("Loading playlist...");
+
+        if (cachedPlaylistTemplate != null && !cachedPlaylistTemplate.isEmpty()) {
+            applyAndDisplayPlaylistHtml(cachedPlaylistTemplate, targetUrl);
+            return;
+        }
+
+        final String playlistUrl = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/Playlist.html";
+        playlistLoadThread = new Thread(() -> {
+            OkHttpClient client = new OkHttpClient();
+            Request request = new Request.Builder().url(playlistUrl).build();
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful() || response.body() == null) {
+                    throw new IllegalStateException("HTTP " + response.code());
+                }
+                String htmlTemplate = response.body().string();
+                cachedPlaylistTemplate = htmlTemplate;
+                runOnUiThread(() -> applyAndDisplayPlaylistHtml(htmlTemplate, targetUrl));
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    setStatus("Could not load playlist: " + e.getMessage());
+                    toast("Playlist error: " + e.getMessage());
+                });
+            }
+        }, "playlist-html-loader");
+        playlistLoadThread.start();
+    }
+
+    private void applyAndDisplayPlaylistHtml(String template, String targetUrl) {
+        if (eventWebView == null || isFinishing()) return;
+
+        // Replace INPUT URL with the actual target URL
+        String finalHtml = template.replace("INPUT URL", targetUrl);
+
+        isPlaylistViewActive = true;
+        eventWebView.loadDataWithBaseURL(
+                "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/",
+                finalHtml,
+                "text/html",
+                "UTF-8",
+                null
+        );
+        setStatus("Playlist loaded");
     }
 
     // ==========================================
@@ -2433,7 +2548,21 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void scheduleSplashDismiss() {
-        handler.postDelayed(splashDismissRunnable, 2400);
+        splashStartTime = System.currentTimeMillis();
+        // Maximum fallback timeout of 4000ms if network is offline or slow
+        handler.postDelayed(splashDismissRunnable, 4000);
+    }
+
+    private void onHtmlContentLoaded() {
+        if (isSplashDismissed) return;
+        long elapsed = System.currentTimeMillis() - splashStartTime;
+        long minDisplayTime = 1800; // Minimum splash display time for branding
+        if (elapsed >= minDisplayTime) {
+            dismissSplashScreen();
+        } else {
+            handler.removeCallbacks(splashDismissRunnable);
+            handler.postDelayed(splashDismissRunnable, minDisplayTime - elapsed);
+        }
     }
 
     private void dismissSplashScreen() {
@@ -2504,8 +2633,13 @@ public class MainActivity extends AppCompatActivity {
             htmlLoadThread.interrupt();
             htmlLoadThread = null;
         }
+        if (playlistLoadThread != null) {
+            playlistLoadThread.interrupt();
+            playlistLoadThread = null;
+        }
         if (eventWebView != null) {
             eventWebView.removeJavascriptInterface("CustomWebView");
+            eventWebView.removeJavascriptInterface("AppInventor");
             eventWebView.destroy();
             eventWebView = null;
         }
