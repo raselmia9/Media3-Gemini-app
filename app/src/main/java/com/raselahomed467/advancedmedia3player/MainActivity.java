@@ -2406,7 +2406,7 @@ public class MainActivity extends AppCompatActivity {
                 + "button{background:#10b981;color:#fff;border:none;padding:12px 28px;font-size:14px;font-weight:bold;border-radius:8px;cursor:pointer;outline:none;}</style></head>"
                 + "<body><h3>Failed to load home content</h3><p>"
                 + (message != null ? message.replace("<", "&lt;").replace(">", "&gt;") : "Network connection error")
-                + "</p><button onclick="if(window.AppInventor)window.AppInventor.setWebViewString('ACTION>RETRY');else if(window.CustomWebView)window.CustomWebView.setWebViewString('ACTION>RETRY');else location.reload();">Tap to Retry</button></body></html>";
+                + "</p><button onclick=\"if(window.AppInventor)window.AppInventor.setWebViewString('ACTION>RETRY');else if(window.CustomWebView)window.CustomWebView.setWebViewString('ACTION>RETRY');else location.reload();\">Tap to Retry</button></body></html>";
     }
 
     private void preloadHtmlTemplates() {
