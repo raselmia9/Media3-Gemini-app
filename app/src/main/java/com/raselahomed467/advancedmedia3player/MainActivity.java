@@ -189,7 +189,6 @@ public class MainActivity extends AppCompatActivity {
     private final List<TextView> episodeButtonViews = new ArrayList<>();
 
     private boolean fullscreen = false;
-    private boolean wasFullscreenBeforePip = false;
     private int resizeMode = 0;
 
     private boolean isControlsVisible = true;
