@@ -31,6 +31,7 @@ import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
+import android.webkit.WebSettings;
 import android.webkit.WebViewClient;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -97,6 +98,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean isSearchOpen = false;
     private LinearLayout inputScroll;
     private WebView eventWebView;
+    private WebView playlistWebView;
+    private FrameLayout webContentContainer;
     private volatile String cachedPlaylistTemplate = null;
     private volatile boolean isPlaylistViewActive = false;
     private Thread playlistLoadThread = null;
@@ -236,6 +239,14 @@ public class MainActivity extends AppCompatActivity {
                             dismissSplashScreen();
                         } else if (isSearchOpen) {
                             closeSearch();
+                        } else if (isPlaylistViewActive) {
+                            // Close playlist tab and reveal the existing home WebView without reloading it.
+                            closePlaylistTab();
+                        } else if (player != null && playerContainer != null
+                                && playerContainer.getVisibility() == View.VISIBLE
+                                && (player.isPlaying() || player.getPlayWhenReady())) {
+                            // YouTube-style: use Back to enter PiP while a video is active.
+                            enterPictureInPicture();
                         } else if (fullscreen) {
                             toggleFullscreen();
                         } else if (playerContainer != null && playerContainer.getVisibility() == View.VISIBLE) {
@@ -244,8 +255,6 @@ public class MainActivity extends AppCompatActivity {
                             }
                             playerContainer.setVisibility(View.GONE);
                             hideEpisodeButtons();
-                        } else if (isPlaylistViewActive) {
-                            loadEventHtml();
                         } else if (eventWebView != null && eventWebView.canGoBack()) {
                             eventWebView.goBack();
                         } else {
@@ -444,27 +453,26 @@ public class MainActivity extends AppCompatActivity {
 
         inputScroll.addView(inputHeader, new LinearLayout.LayoutParams(-1, -2));
 
-        // WebView with full-bleed width (0 margin, 0 padding)
-        eventWebView = new WebView(this);
-        eventWebView.getSettings().setJavaScriptEnabled(true);
-        eventWebView.getSettings().setDomStorageEnabled(true);
-        eventWebView.getSettings().setLoadsImagesAutomatically(true);
-        eventWebView.getSettings().setUseWideViewPort(true);
-        eventWebView.getSettings().setLoadWithOverviewMode(true);
-        eventWebView.getSettings().setAllowFileAccess(false);
-        eventWebView.getSettings().setAllowContentAccess(false);
-        eventWebView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
-        eventWebView.setBackgroundColor(Color.rgb(13, 17, 23));
-        eventWebView.setWebChromeClient(new WebChromeClient());
-        eventWebView.setWebViewClient(new WebViewClient());
+        // Separate in-memory WebViews act as Home and Playlist tabs.
+        webContentContainer = new FrameLayout(this);
+        LinearLayout.LayoutParams webContainerParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        webContainerParams.setMargins(0, 0, 0, 0);
         HtmlItemBridge bridge = new HtmlItemBridge();
+
+        eventWebView = new WebView(this);
+        configureWebViewSettings(eventWebView);
         eventWebView.addJavascriptInterface(bridge, "CustomWebView");
         eventWebView.addJavascriptInterface(bridge, "AppInventor");
+        webContentContainer.addView(eventWebView, new FrameLayout.LayoutParams(-1, -1));
 
-        LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(-1, 0, 1f);
-        webParams.setMargins(0, 0, 0, 0);
-        inputScroll.addView(eventWebView, webParams);
+        playlistWebView = new WebView(this);
+        configureWebViewSettings(playlistWebView);
+        playlistWebView.setVisibility(View.GONE);
+        playlistWebView.addJavascriptInterface(bridge, "CustomWebView");
+        playlistWebView.addJavascriptInterface(bridge, "AppInventor");
+        webContentContainer.addView(playlistWebView, new FrameLayout.LayoutParams(-1, -1));
 
+        inputScroll.addView(webContentContainer, webContainerParams);
         loadEventHtml();
 
         rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.70f));
@@ -2279,14 +2287,32 @@ public class MainActivity extends AppCompatActivity {
         filterWebView("");
     }
 
+    private void configureWebViewSettings(WebView wv) {
+        WebSettings s = wv.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setLoadsImagesAutomatically(true);
+        s.setUseWideViewPort(true);
+        s.setLoadWithOverviewMode(true);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
+        wv.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        wv.setBackgroundColor(Color.rgb(13, 17, 23));
+        wv.setWebChromeClient(new WebChromeClient());
+        wv.setWebViewClient(new WebViewClient());
+    }
+
     private void filterWebView(String query) {
-        if (eventWebView == null) return;
-        String cleanQuery = (query != null) ? query.replace("\\", "\\\\").replace("'", "\\'").trim() : "";
+        WebView target = isPlaylistViewActive ? playlistWebView : eventWebView;
+        if (target == null) return;
+        String cleanQuery = (query != null)
+                ? query.replace("\\", "\\\\").replace("'", "\\'").trim()
+                : "";
         String js = "if (typeof filterMatches === 'function') { filterMatches('" + cleanQuery + "'); }";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            eventWebView.evaluateJavascript(js, null);
+            target.evaluateJavascript(js, null);
         } else {
-            eventWebView.loadUrl("javascript:" + js);
+            target.loadUrl("javascript:" + js);
         }
     }
 
@@ -2369,13 +2395,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void applyAndDisplayPlaylistHtml(String template, String targetUrl) {
-        if (eventWebView == null || isFinishing()) return;
+        if (playlistWebView == null || isFinishing()) return;
 
-        // Replace INPUT URL with the actual target URL
         String finalHtml = template.replace("INPUT URL", targetUrl);
-
         isPlaylistViewActive = true;
-        eventWebView.loadDataWithBaseURL(
+        eventWebView.setVisibility(View.GONE);
+        playlistWebView.setVisibility(View.VISIBLE);
+        playlistWebView.loadDataWithBaseURL(
                 "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/",
                 finalHtml,
                 "text/html",
@@ -2383,6 +2409,17 @@ public class MainActivity extends AppCompatActivity {
                 null
         );
         setStatus("Playlist loaded");
+    }
+
+    private void closePlaylistTab() {
+        isPlaylistViewActive = false;
+        if (playlistWebView != null) {
+            playlistWebView.setVisibility(View.GONE);
+        }
+        if (eventWebView != null) {
+            eventWebView.setVisibility(View.VISIBLE);
+        }
+        setStatus("Ready");
     }
 
     // ==========================================
@@ -2636,6 +2673,12 @@ public class MainActivity extends AppCompatActivity {
         if (playlistLoadThread != null) {
             playlistLoadThread.interrupt();
             playlistLoadThread = null;
+        }
+        if (playlistWebView != null) {
+            playlistWebView.removeJavascriptInterface("CustomWebView");
+            playlistWebView.removeJavascriptInterface("AppInventor");
+            playlistWebView.destroy();
+            playlistWebView = null;
         }
         if (eventWebView != null) {
             eventWebView.removeJavascriptInterface("CustomWebView");
