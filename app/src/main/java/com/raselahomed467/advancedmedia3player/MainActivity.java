@@ -79,6 +79,10 @@ import androidx.media3.ui.TrackSelectionDialogBuilder;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.util.concurrent.TimeUnit;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -104,6 +108,12 @@ public class MainActivity extends AppCompatActivity {
     private volatile boolean isPlaylistViewActive = false;
     private Thread playlistLoadThread = null;
     private Thread htmlLoadThread;
+
+    private static final String CACHED_EVENT_HTML_FILE = "cached_event_code.html";
+    private static final String CACHED_PLAYLIST_HTML_FILE = "cached_playlist.html";
+    private static final String EVENT_HTML_URL = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/EventCode.html";
+    private static final String PLAYLIST_HTML_URL = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/Playlist.html";
+    private boolean isEventHtmlLoaded = false;
 
     private FrameLayout playerContainer;
     private FrameLayout customControlsOverlay;
@@ -473,7 +483,28 @@ public class MainActivity extends AppCompatActivity {
         webContentContainer.addView(playlistWebView, new FrameLayout.LayoutParams(-1, -1));
 
         inputScroll.addView(webContentContainer, webContainerParams);
-        loadEventHtml();
+
+        // Instantly load cached EventCode.html from local storage if available
+        String cachedHtml = loadHtmlFromLocal(CACHED_EVENT_HTML_FILE);
+        if (cachedHtml != null && !cachedHtml.trim().isEmpty()) {
+            isEventHtmlLoaded = true;
+            eventWebView.loadDataWithBaseURL(
+                    "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/",
+                    cachedHtml,
+                    "text/html",
+                    "UTF-8",
+                    null
+            );
+        }
+
+        // Also check if cached Playlist template exists
+        String cachedPlaylist = loadHtmlFromLocal(CACHED_PLAYLIST_HTML_FILE);
+        if (cachedPlaylist != null && !cachedPlaylist.trim().isEmpty()) {
+            cachedPlaylistTemplate = cachedPlaylist;
+        }
+
+        // Fetch and update templates in background during splash screen
+        preloadHtmlTemplates();
 
         rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.70f));
 
@@ -2082,6 +2113,12 @@ public class MainActivity extends AppCompatActivity {
         String clean = raw.trim();
 
         // Check if the link contains Playlist>
+        if ("ACTION>RETRY".equalsIgnoreCase(clean)) {
+            setStatus("Retrying content load...");
+            preloadHtmlTemplates();
+            return;
+        }
+
         if (clean.contains("Playlist>")) {
             String targetUrl = clean.replace("Playlist>", "").trim();
             if (urlInput != null) {
@@ -2291,15 +2328,33 @@ public class MainActivity extends AppCompatActivity {
         WebSettings s = wv.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
+        s.setDatabaseEnabled(true);
         s.setLoadsImagesAutomatically(true);
         s.setUseWideViewPort(true);
         s.setLoadWithOverviewMode(true);
-        s.setAllowFileAccess(false);
-        s.setAllowContentAccess(false);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setAllowFileAccess(true);
+        s.setAllowContentAccess(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+            android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true);
+        }
         wv.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
         wv.setBackgroundColor(Color.rgb(13, 17, 23));
         wv.setWebChromeClient(new WebChromeClient());
-        wv.setWebViewClient(new WebViewClient());
+        wv.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                // Guarantee the EventCode.html loader container is dismissed even if external CDN images hang
+                String js = "(function(){ var el = document.getElementById('loader-container'); if(el) el.style.display='none'; })();";
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    view.evaluateJavascript(js, null);
+                } else {
+                    view.loadUrl("javascript:" + js);
+                }
+            }
+        });
     }
 
     private void filterWebView(String query) {
@@ -2316,52 +2371,104 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void loadEventHtml() {
-        isPlaylistViewActive = false;
-        final String htmlUrl = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/EventCode.html";
-        htmlLoadThread = new Thread(() -> {
-            OkHttpClient client = new OkHttpClient();
-            Request request = new Request.Builder().url(htmlUrl).build();
-            try (Response response = client.newCall(request).execute()) {
-                if (!response.isSuccessful() || response.body() == null) {
-                    throw new IllegalStateException("HTTP " + response.code());
+    private void saveHtmlToLocal(String filename, String content) {
+        if (content == null || content.trim().isEmpty()) return;
+        try {
+            File file = new File(getFilesDir(), filename);
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(content.getBytes(StandardCharsets.UTF_8));
+                fos.flush();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String loadHtmlFromLocal(String filename) {
+        try {
+            File file = new File(getFilesDir(), filename);
+            if (!file.exists() || file.length() == 0) return null;
+            byte[] buffer = new byte[(int) file.length()];
+            try (FileInputStream fis = new FileInputStream(file)) {
+                int read = fis.read(buffer);
+                if (read > 0) {
+                    return new String(buffer, 0, read, StandardCharsets.UTF_8);
                 }
-                String html = response.body().string();
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private String getErrorHtml(String message) {
+        return "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+                + "<style>body{background:#0d1117;color:#c9d1d9;font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:80vh;margin:0;padding:20px;text-align:center;box-sizing:border-box;}"
+                + "h3{color:#fff;margin:0 0 10px 0;font-size:18px;}p{color:#8b949e;font-size:13px;margin:0 0 20px 0;line-height:1.4;}"
+                + "button{background:#10b981;color:#fff;border:none;padding:12px 28px;font-size:14px;font-weight:bold;border-radius:8px;cursor:pointer;outline:none;}</style></head>"
+                + "<body><h3>Failed to load home content</h3><p>"
+                + (message != null ? message.replace("<", "&lt;").replace(">", "&gt;") : "Network connection error")
+                + "</p><button onclick="if(window.AppInventor)window.AppInventor.setWebViewString('ACTION>RETRY');else if(window.CustomWebView)window.CustomWebView.setWebViewString('ACTION>RETRY');else location.reload();">Tap to Retry</button></body></html>";
+    }
+
+    private void preloadHtmlTemplates() {
+        isPlaylistViewActive = false;
+        htmlLoadThread = new Thread(() -> {
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(8, TimeUnit.SECONDS)
+                    .readTimeout(12, TimeUnit.SECONDS)
+                    .build();
+
+            // 1. Fetch EventCode.html
+            try {
+                Request request = new Request.Builder().url(EVENT_HTML_URL).build();
+                try (Response response = client.newCall(request).execute()) {
+                    if (response.isSuccessful() && response.body() != null) {
+                        final String eventHtml = response.body().string();
+                        saveHtmlToLocal(CACHED_EVENT_HTML_FILE, eventHtml);
+                        runOnUiThread(() -> {
+                            if (eventWebView != null && !isFinishing()) {
+                                if (!isEventHtmlLoaded || !isSplashDismissed) {
+                                    isEventHtmlLoaded = true;
+                                    eventWebView.loadDataWithBaseURL(
+                                            "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/",
+                                            eventHtml,
+                                            "text/html",
+                                            "UTF-8",
+                                            null
+                                    );
+                                }
+                                onHtmlContentLoaded();
+                            }
+                        });
+                    }
+                }
+            } catch (Exception e) {
                 runOnUiThread(() -> {
-                    if (eventWebView != null && !isFinishing()) {
-                        isPlaylistViewActive = false;
+                    if (!isEventHtmlLoaded && eventWebView != null && !isFinishing()) {
                         eventWebView.loadDataWithBaseURL(
                                 "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/",
-                                html,
+                                getErrorHtml("Could not load content: " + e.getMessage()),
                                 "text/html",
                                 "UTF-8",
                                 null
                         );
-                        onHtmlContentLoaded();
                     }
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    setStatus("Could not load web content: " + e.getMessage());
                     dismissSplashScreen();
                 });
             }
 
-            // Pre-fetch Playlist.html template in background for instant loading on click
-            if (cachedPlaylistTemplate == null) {
-                try {
-                    Request plRequest = new Request.Builder()
-                            .url("https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/Playlist.html")
-                            .build();
-                    try (Response plResp = client.newCall(plRequest).execute()) {
-                        if (plResp.isSuccessful() && plResp.body() != null) {
-                            cachedPlaylistTemplate = plResp.body().string();
-                        }
+            // 2. Fetch Playlist.html template in background and save to local storage
+            try {
+                Request plRequest = new Request.Builder().url(PLAYLIST_HTML_URL).build();
+                try (Response plResp = client.newCall(plRequest).execute()) {
+                    if (plResp.isSuccessful() && plResp.body() != null) {
+                        final String plHtml = plResp.body().string();
+                        cachedPlaylistTemplate = plHtml;
+                        saveHtmlToLocal(CACHED_PLAYLIST_HTML_FILE, plHtml);
                     }
-                } catch (Exception ignored) {
                 }
+            } catch (Exception ignored) {
             }
-        }, "event-html-loader");
+        }, "templates-preloader");
         htmlLoadThread.start();
     }
 
@@ -2373,16 +2480,26 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        final String playlistUrl = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/Playlist.html";
+        String localTemplate = loadHtmlFromLocal(CACHED_PLAYLIST_HTML_FILE);
+        if (localTemplate != null && !localTemplate.isEmpty()) {
+            cachedPlaylistTemplate = localTemplate;
+            applyAndDisplayPlaylistHtml(localTemplate, targetUrl);
+            return;
+        }
+
         playlistLoadThread = new Thread(() -> {
-            OkHttpClient client = new OkHttpClient();
-            Request request = new Request.Builder().url(playlistUrl).build();
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(8, TimeUnit.SECONDS)
+                    .readTimeout(12, TimeUnit.SECONDS)
+                    .build();
+            Request request = new Request.Builder().url(PLAYLIST_HTML_URL).build();
             try (Response response = client.newCall(request).execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
                     throw new IllegalStateException("HTTP " + response.code());
                 }
                 String htmlTemplate = response.body().string();
                 cachedPlaylistTemplate = htmlTemplate;
+                saveHtmlToLocal(CACHED_PLAYLIST_HTML_FILE, htmlTemplate);
                 runOnUiThread(() -> applyAndDisplayPlaylistHtml(htmlTemplate, targetUrl));
             } catch (Exception e) {
                 runOnUiThread(() -> {
