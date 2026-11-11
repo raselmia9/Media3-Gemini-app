@@ -18,6 +18,7 @@ import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -28,6 +29,7 @@ import android.util.Base64;
 import android.util.Rational;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewParent;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
@@ -131,8 +133,16 @@ public class MainActivity extends AppCompatActivity {
     // In-App Miniplayer (Floating PiP inside app)
     private FrameLayout mainAppContainer;
     private FrameLayout miniControlsOverlay;
+    private LinearLayout miniTopBar;
+    private TextView btnMiniExpand;
+    private TextView btnMiniClose;
     private TextView btnMiniPlayPause;
+    private Drawable miniVignetteDrawable;
     private boolean isMiniPlayerActive = false;
+    private boolean isMiniControlsVisible = true;
+    private boolean wasMiniPlayerBeforePip = false;
+    private boolean wasFullscreenBeforePip = false;
+    private final Runnable miniAutoHideRunnable = this::hideMiniControls;
 
     private FrameLayout splashLayout;
     private boolean isSplashDismissed = false;
@@ -1957,60 +1967,67 @@ public class MainActivity extends AppCompatActivity {
         miniControlsOverlay = new FrameLayout(this);
         miniControlsOverlay.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
         miniControlsOverlay.setVisibility(View.GONE);
+        miniControlsOverlay.setClickable(true);
+        miniControlsOverlay.setFocusable(false);
 
         // Dark gradient vignette for readability
-        GradientDrawable vignette = new GradientDrawable(
+        miniVignetteDrawable = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{Color.argb(160, 0, 0, 0), Color.argb(40, 0, 0, 0), Color.argb(180, 0, 0, 0)}
+                new int[]{Color.argb(170, 0, 0, 0), Color.argb(40, 0, 0, 0), Color.argb(190, 0, 0, 0)}
         );
-        miniControlsOverlay.setBackground(vignette);
+        miniControlsOverlay.setBackground(miniVignetteDrawable);
 
         // Top bar: Expand button on left, Close button on right
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setPadding(dp(6), dp(6), dp(6), 0);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        miniTopBar = new LinearLayout(this);
+        miniTopBar.setOrientation(LinearLayout.HORIZONTAL);
+        miniTopBar.setPadding(dp(6), dp(6), dp(6), 0);
+        miniTopBar.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView btnMiniExpand = new TextView(this);
+        btnMiniExpand = new TextView(this);
         btnMiniExpand.setText("⛶");
         btnMiniExpand.setTextColor(Color.WHITE);
         btnMiniExpand.setTextSize(14);
         btnMiniExpand.setGravity(Gravity.CENTER);
         GradientDrawable expBg = new GradientDrawable();
-        expBg.setColor(Color.argb(160, 20, 28, 42));
-        expBg.setCornerRadius(dp(14));
+        expBg.setColor(Color.argb(180, 20, 28, 42));
+        expBg.setCornerRadius(dp(15));
+        expBg.setStroke(dp(1), Color.argb(110, 255, 255, 255));
         btnMiniExpand.setBackground(expBg);
+        btnMiniExpand.setClickable(true);
         btnMiniExpand.setOnClickListener(v -> exitInAppMiniPlayer());
-        topBar.addView(btnMiniExpand, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        miniTopBar.addView(btnMiniExpand, new LinearLayout.LayoutParams(dp(30), dp(30)));
 
         View spacer = new View(this);
-        topBar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        miniTopBar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
-        TextView btnMiniClose = new TextView(this);
+        btnMiniClose = new TextView(this);
         btnMiniClose.setText("✕");
         btnMiniClose.setTextColor(Color.WHITE);
         btnMiniClose.setTextSize(13);
         btnMiniClose.setGravity(Gravity.CENTER);
         GradientDrawable closeBg = new GradientDrawable();
-        closeBg.setColor(Color.argb(190, 220, 38, 38));
-        closeBg.setCornerRadius(dp(14));
+        closeBg.setColor(Color.argb(210, 220, 38, 38));
+        closeBg.setCornerRadius(dp(15));
+        closeBg.setStroke(dp(1), Color.argb(110, 255, 255, 255));
         btnMiniClose.setBackground(closeBg);
+        btnMiniClose.setClickable(true);
         btnMiniClose.setOnClickListener(v -> closeMiniPlayer());
-        topBar.addView(btnMiniClose, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        miniTopBar.addView(btnMiniClose, new LinearLayout.LayoutParams(dp(30), dp(30)));
 
-        miniControlsOverlay.addView(topBar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+        miniControlsOverlay.addView(miniTopBar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
 
         // Center Play/Pause button
         btnMiniPlayPause = new TextView(this);
         btnMiniPlayPause.setText("❚❚");
         btnMiniPlayPause.setTextColor(Color.WHITE);
-        btnMiniPlayPause.setTextSize(16);
+        btnMiniPlayPause.setTextSize(18);
         btnMiniPlayPause.setGravity(Gravity.CENTER);
         GradientDrawable playBg = new GradientDrawable();
-        playBg.setColor(Color.argb(180, 18, 24, 38));
-        playBg.setCornerRadius(dp(20));
-        playBg.setStroke(dp(1), Color.argb(130, 255, 255, 255));
+        playBg.setColor(Color.argb(190, 18, 24, 38));
+        playBg.setCornerRadius(dp(22));
+        playBg.setStroke(dp(1), Color.argb(140, 255, 255, 255));
         btnMiniPlayPause.setBackground(playBg);
+        btnMiniPlayPause.setClickable(true);
         btnMiniPlayPause.setOnClickListener(v -> {
             if (player != null) {
                 if (player.isPlaying()) {
@@ -2020,9 +2037,10 @@ public class MainActivity extends AppCompatActivity {
                     player.play();
                     btnMiniPlayPause.setText("❚❚");
                 }
+                resetMiniAutoHide();
             }
         });
-        FrameLayout.LayoutParams playParams = new FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER);
+        FrameLayout.LayoutParams playParams = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER);
         miniControlsOverlay.addView(btnMiniPlayPause, playParams);
 
         // Touch & Drag handler for the miniplayer overlay
@@ -2033,19 +2051,17 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
-                // If touch hits close, expand or play/pause button, do not intercept
-                Rect rect = new Rect();
-                btnMiniClose.getGlobalVisibleRect(rect);
-                if (rect.contains((int) event.getRawX(), (int) event.getRawY())) {
-                    return false;
-                }
-                btnMiniExpand.getGlobalVisibleRect(rect);
-                if (rect.contains((int) event.getRawX(), (int) event.getRawY())) {
-                    return false;
-                }
-                btnMiniPlayPause.getGlobalVisibleRect(rect);
-                if (rect.contains((int) event.getRawX(), (int) event.getRawY())) {
-                    return false;
+                // If controls are visible, let direct clicks on buttons go through
+                if (isMiniControlsVisible) {
+                    if (isTouchOnMiniView(btnMiniClose, event)) {
+                        return false;
+                    }
+                    if (isTouchOnMiniView(btnMiniExpand, event)) {
+                        return false;
+                    }
+                    if (isTouchOnMiniView(btnMiniPlayPause, event)) {
+                        return false;
+                    }
                 }
 
                 switch (event.getAction()) {
@@ -2060,7 +2076,7 @@ public class MainActivity extends AppCompatActivity {
                     case MotionEvent.ACTION_MOVE:
                         float dx = event.getRawX() - downX;
                         float dy = event.getRawY() - downY;
-                        if (Math.abs(dx) > dp(8) || Math.abs(dy) > dp(8)) {
+                        if (!isDragging && (Math.hypot(dx, dy) > dp(6))) {
                             isDragging = true;
                         }
                         if (isDragging) {
@@ -2071,8 +2087,16 @@ public class MainActivity extends AppCompatActivity {
 
                     case MotionEvent.ACTION_UP:
                         if (!isDragging) {
-                            exitInAppMiniPlayer();
+                            v.performClick();
+                            // Tap on the mini card toggles button visibility!
+                            // Only btnMiniExpand restores full player view.
+                            toggleMiniControls();
                         }
+                        isDragging = false;
+                        return true;
+
+                    case MotionEvent.ACTION_CANCEL:
+                        isDragging = false;
                         return true;
                 }
                 return false;
@@ -2080,6 +2104,54 @@ public class MainActivity extends AppCompatActivity {
         });
 
         playerContainer.addView(miniControlsOverlay, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private boolean isTouchOnMiniView(View view, MotionEvent event) {
+        if (view == null || view.getVisibility() != View.VISIBLE) return false;
+        Rect r = new Rect();
+        view.getGlobalVisibleRect(r);
+        r.inset(-dp(6), -dp(6));
+        return r.contains((int) event.getRawX(), (int) event.getRawY());
+    }
+
+    private void showMiniControls() {
+        if (!isMiniPlayerActive || miniControlsOverlay == null) return;
+        if (miniVignetteDrawable != null) {
+            miniControlsOverlay.setBackground(miniVignetteDrawable);
+        }
+        if (miniTopBar != null) miniTopBar.setVisibility(View.VISIBLE);
+        if (btnMiniPlayPause != null) {
+            btnMiniPlayPause.setVisibility(View.VISIBLE);
+            if (player != null) {
+                btnMiniPlayPause.setText(player.isPlaying() ? "❚❚" : "▶");
+            }
+        }
+        isMiniControlsVisible = true;
+        resetMiniAutoHide();
+    }
+
+    private void hideMiniControls() {
+        if (miniControlsOverlay == null) return;
+        handler.removeCallbacks(miniAutoHideRunnable);
+        miniControlsOverlay.setBackground(null);
+        if (miniTopBar != null) miniTopBar.setVisibility(View.GONE);
+        if (btnMiniPlayPause != null) btnMiniPlayPause.setVisibility(View.GONE);
+        isMiniControlsVisible = false;
+    }
+
+    private void toggleMiniControls() {
+        if (isMiniControlsVisible) {
+            hideMiniControls();
+        } else {
+            showMiniControls();
+        }
+    }
+
+    private void resetMiniAutoHide() {
+        handler.removeCallbacks(miniAutoHideRunnable);
+        if (isMiniControlsVisible && isMiniPlayerActive) {
+            handler.postDelayed(miniAutoHideRunnable, 3500);
+        }
     }
 
     private void toggleInAppMiniPlayer() {
@@ -2114,12 +2186,7 @@ public class MainActivity extends AppCompatActivity {
             gestureHudCard.setVisibility(View.GONE);
         }
 
-        // Show mini controls overlay
-        if (miniControlsOverlay != null) {
-            miniControlsOverlay.setVisibility(View.VISIBLE);
-        }
-
-        // Apply rounded card styling and elevation
+        // Apply rounded card styling and elevation (Android 5.0+ / API 21+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             GradientDrawable miniBg = new GradientDrawable();
             miniBg.setColor(Color.BLACK);
@@ -2157,6 +2224,12 @@ public class MainActivity extends AppCompatActivity {
         mainAppContainer.addView(playerContainer, miniParams);
         playerContainer.setVisibility(View.VISIBLE);
 
+        // Show mini controls overlay with auto-hide
+        if (miniControlsOverlay != null) {
+            miniControlsOverlay.setVisibility(View.VISIBLE);
+            showMiniControls();
+        }
+
         setStatus("Mini Player active");
     }
 
@@ -2172,6 +2245,7 @@ public class MainActivity extends AppCompatActivity {
         playerContainer.setTranslationY(0);
 
         // Hide mini controls
+        hideMiniControls();
         if (miniControlsOverlay != null) {
             miniControlsOverlay.setVisibility(View.GONE);
         }
@@ -2227,6 +2301,7 @@ public class MainActivity extends AppCompatActivity {
             playerContainer.setTranslationX(0);
             playerContainer.setTranslationY(0);
 
+            hideMiniControls();
             if (miniControlsOverlay != null) {
                 miniControlsOverlay.setVisibility(View.GONE);
             }
@@ -2293,23 +2368,46 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                builder.setAutoEnterEnabled(player != null && player.isPlaying());
+                builder.setAutoEnterEnabled(player != null && (player.isPlaying() || player.getPlayWhenReady()));
             }
 
             setPictureInPictureParams(builder.build());
         } catch (Exception ignored) {}
     }
 
+    private void setPlayerContainerMatchParent() {
+        if (playerContainer == null) return;
+        ViewParent parent = playerContainer.getParent();
+        if (parent instanceof FrameLayout) {
+            FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            );
+            playerContainer.setLayoutParams(flp);
+        } else if (parent instanceof LinearLayout) {
+            LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            );
+            llp.weight = 0;
+            playerContainer.setLayoutParams(llp);
+        } else {
+            ViewGroup.LayoutParams lp = playerContainer.getLayoutParams();
+            if (lp != null) {
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                playerContainer.setLayoutParams(lp);
+            }
+        }
+    }
+
     private void enterPictureInPicture() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            toast("Picture-in-Picture requires Android 8.0 or newer");
             return;
         }
         if (player == null || player.getMediaItemCount() == 0) {
-            toast("প্রথমে ভিডিও চালু করুন");
             return;
         }
         try {
+            wasMiniPlayerBeforePip = isMiniPlayerActive;
             wasFullscreenBeforePip = fullscreen;
 
             // Reset orientation so PiP transitions cleanly
@@ -2318,18 +2416,27 @@ public class MainActivity extends AppCompatActivity {
             }
 
             // Immediately hide everything except video view
+            if (splashLayout != null) splashLayout.setVisibility(View.GONE);
             if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
-            inputScroll.setVisibility(View.GONE);
-            if (customControlsOverlay != null) {
-                customControlsOverlay.setVisibility(View.GONE);
+            if (inputScroll != null) inputScroll.setVisibility(View.GONE);
+            if (customControlsOverlay != null) customControlsOverlay.setVisibility(View.GONE);
+            if (bottomPanel != null) bottomPanel.setVisibility(View.GONE);
+            if (gestureHudCard != null) gestureHudCard.setVisibility(View.GONE);
+            hideMiniControls();
+            if (miniControlsOverlay != null) miniControlsOverlay.setVisibility(View.GONE);
+
+            playerContainer.setTranslationX(0);
+            playerContainer.setTranslationY(0);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                playerContainer.setOutlineProvider(null);
+                playerContainer.setClipToOutline(false);
+                playerContainer.setElevation(0);
+                playerContainer.setBackgroundColor(Color.BLACK);
             }
-            if (bottomPanel != null) {
-                bottomPanel.setVisibility(View.GONE);
-            }
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-            ));
+
+            setPlayerContainerMatchParent();
+            playerContainer.setVisibility(View.VISIBLE);
 
             Rational aspectRatio = new Rational(16, 9);
             if (player != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
@@ -2363,29 +2470,53 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void restoreLayoutFromPip() {
-        if (customControlsOverlay != null) {
-            customControlsOverlay.setVisibility(View.VISIBLE);
+        if (wasMiniPlayerBeforePip) {
+            wasMiniPlayerBeforePip = false;
+            isMiniPlayerActive = false; // reset flag so enterInAppMiniPlayer() re-attaches cleanly
+            enterInAppMiniPlayer();
+            if (topBarLayout != null) topBarLayout.setVisibility(View.VISIBLE);
+            if (inputScroll != null) inputScroll.setVisibility(View.VISIBLE);
+            applyFullscreenSystemUi(false);
+            return;
         }
+
+        // Ensure playerContainer is inside rootLayout
+        if (playerContainer.getParent() != rootLayout) {
+            if (playerContainer.getParent() != null) {
+                ((ViewGroup) playerContainer.getParent()).removeView(playerContainer);
+            }
+            rootLayout.addView(playerContainer, Math.min(1, rootLayout.getChildCount()));
+        }
+
         fullscreen = wasFullscreenBeforePip;
         if (fullscreen) {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
-            inputScroll.setVisibility(View.GONE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
+            if (inputScroll != null) inputScroll.setVisibility(View.GONE);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
-            ));
+            );
+            playerContainer.setLayoutParams(lp);
             applyFullscreenSystemUi(true);
         } else {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
             if (topBarLayout != null) topBarLayout.setVisibility(View.VISIBLE);
-            inputScroll.setVisibility(View.VISIBLE);
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
+            if (inputScroll != null) {
+                inputScroll.setVisibility(View.VISIBLE);
+                inputScroll.setLayoutParams(new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.70f));
+            }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0,
                     0.30f
-            ));
+            );
+            playerContainer.setLayoutParams(lp);
             applyFullscreenSystemUi(false);
+        }
+        if (customControlsOverlay != null) {
+            customControlsOverlay.setVisibility(View.VISIBLE);
         }
         showControls();
         updateFullscreenButton();
@@ -2395,22 +2526,27 @@ public class MainActivity extends AppCompatActivity {
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
         if (isInPictureInPictureMode) {
-            // Keep strictly video container visible in PiP
-            if (splashLayout != null) {
-                splashLayout.setVisibility(View.GONE);
-            }
+            wasMiniPlayerBeforePip = isMiniPlayerActive;
+            wasFullscreenBeforePip = fullscreen;
+
+            if (splashLayout != null) splashLayout.setVisibility(View.GONE);
             if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
-            inputScroll.setVisibility(View.GONE);
-            if (customControlsOverlay != null) {
-                customControlsOverlay.setVisibility(View.GONE);
+            if (inputScroll != null) inputScroll.setVisibility(View.GONE);
+            if (customControlsOverlay != null) customControlsOverlay.setVisibility(View.GONE);
+            if (bottomPanel != null) bottomPanel.setVisibility(View.GONE);
+            if (gestureHudCard != null) gestureHudCard.setVisibility(View.GONE);
+            hideMiniControls();
+            if (miniControlsOverlay != null) miniControlsOverlay.setVisibility(View.GONE);
+
+            playerContainer.setTranslationX(0);
+            playerContainer.setTranslationY(0);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                playerContainer.setOutlineProvider(null);
+                playerContainer.setClipToOutline(false);
+                playerContainer.setElevation(0);
+                playerContainer.setBackgroundColor(Color.BLACK);
             }
-            if (bottomPanel != null) {
-                bottomPanel.setVisibility(View.GONE);
-            }
-            playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-            ));
+            setPlayerContainerMatchParent();
         } else {
             // Restored from PiP
             restoreLayoutFromPip();
@@ -2420,9 +2556,11 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
-        // Auto-enter PiP when Home button/gesture is pressed while video is playing
-        if (player != null && player.isPlaying()) {
-            enterPictureInPicture();
+        // Auto-enter PiP when Home button/gesture is pressed while video is playing (Android 8.0+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (player != null && (player.isPlaying() || player.getPlayWhenReady())) {
+                enterPictureInPicture();
+            }
         }
     }
 
