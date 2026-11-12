@@ -280,6 +280,7 @@ public class MainActivity extends AppCompatActivity {
             getWindow().setNavigationBarContrastEnforced(false);
             getWindow().setStatusBarContrastEnforced(false);
         }
+        getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG_COLOR));
         WindowInsetsControllerCompat barIcons =
                 new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
         barIcons.setAppearanceLightStatusBars(false);
@@ -802,9 +803,9 @@ public class MainActivity extends AppCompatActivity {
         bg.setCornerRadius(dp(12));
         button.setBackground(bg);
 
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(40));
-        params.leftMargin = dp(5);
-        params.rightMargin = dp(5);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(40));
+        params.leftMargin = dp(2);
+        params.rightMargin = dp(2);
         parent.addView(button, params);
 
         button.setOnClickListener(v -> {
@@ -828,7 +829,7 @@ public class MainActivity extends AppCompatActivity {
         }
         button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         button.setColorFilter(Color.WHITE);
-        button.setPadding(dp(11), dp(9), dp(11), dp(9));
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
         button.setContentDescription(description);
         button.setFocusable(true);
         button.setClickable(true);
@@ -838,9 +839,9 @@ public class MainActivity extends AppCompatActivity {
         bg.setCornerRadius(dp(12));
         button.setBackground(bg);
 
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(40));
-        params.leftMargin = dp(5);
-        params.rightMargin = dp(5);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(40));
+        params.leftMargin = dp(2);
+        params.rightMargin = dp(2);
         parent.addView(button, params);
 
         button.setOnClickListener(v -> {
