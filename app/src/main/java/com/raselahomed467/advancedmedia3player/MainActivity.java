@@ -43,6 +43,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ScrollView;
 import android.widget.ImageView;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,6 +57,9 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.media3.common.VideoSize;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.TrackSelectionParameters;
+import androidx.media3.common.Tracks;
 import androidx.activity.OnBackPressedCallback;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
@@ -102,7 +106,16 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout topBarLayout;
     private TextView titleBar;
     private EditText searchEditText;
-    private TextView searchToggleBtn;
+    private FrameLayout searchToggleBtn;
+    private ImageView searchToggleIcon;
+    private TextView searchToggleClose;
+    private FrameLayout sideMenuOverlay;
+    private LinearLayout sideMenuPanel;
+    private TextView menuDisplayValue, menuPipValue, menuSpeedValue;
+    private ImageView speedButton;
+    private boolean speedButtonVisible = true;
+    private boolean autoPipEnabled = true;
+    private int settingsTab = 0;
     private boolean isSearchOpen = false;
     private LinearLayout inputScroll;
     private WebView eventWebView;
@@ -267,6 +280,8 @@ public class MainActivity extends AppCompatActivity {
                     public void handleOnBackPressed() {
                         if (splashLayout != null && splashLayout.getVisibility() == View.VISIBLE && !isSplashDismissed) {
                             dismissSplashScreen();
+                        } else if (sideMenuOverlay != null && sideMenuOverlay.getVisibility() == View.VISIBLE) {
+                            closeSideMenu();
                         } else if (isSearchOpen) {
                             closeSearch();
                         } else if (fullscreen) {
@@ -322,6 +337,27 @@ public class MainActivity extends AppCompatActivity {
         topBarLayout.setGravity(Gravity.CENTER_VERTICAL);
         topBarLayout.setPadding(dp(16), dp(6), dp(16), dp(6));
 
+        // 0. Side menu button (menu.png) at the far left of the header
+        ImageView menuBtn = new ImageView(this);
+        menuBtn.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        menuBtn.setColorFilter(Color.WHITE);
+        menuBtn.setPadding(dp(9), dp(9), dp(9), dp(9));
+        int menuResId = getResources().getIdentifier("menu", "drawable", getPackageName());
+        if (menuResId != 0) {
+            menuBtn.setImageResource(menuResId);
+        }
+        menuBtn.setContentDescription("Menu");
+        menuBtn.setFocusable(true);
+        menuBtn.setClickable(true);
+        GradientDrawable menuBg = new GradientDrawable();
+        menuBg.setColor(Color.argb(160, 35, 48, 67));
+        menuBg.setCornerRadius(dp(10));
+        menuBtn.setBackground(menuBg);
+        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        menuParams.rightMargin = dp(10);
+        topBarLayout.addView(menuBtn, menuParams);
+        menuBtn.setOnClickListener(v -> openSideMenu());
+
         // 1. App Title (RasVibe)
         titleBar = new TextView(this);
         titleBar.setText("RasVibe");
@@ -367,9 +403,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // 3. Search / Close Toggle Button on the far right
-        searchToggleBtn = new TextView(this);
-        searchToggleBtn.setTextColor(Color.WHITE);
-        searchToggleBtn.setGravity(Gravity.CENTER);
+        searchToggleBtn = new FrameLayout(this);
         searchToggleBtn.setFocusable(true);
         searchToggleBtn.setClickable(true);
 
@@ -377,7 +411,24 @@ public class MainActivity extends AppCompatActivity {
         toggleBg.setColor(Color.argb(160, 35, 48, 67));
         toggleBg.setCornerRadius(dp(10));
         searchToggleBtn.setBackground(toggleBg);
-        applySearchToggleIcon(false);
+
+        searchToggleIcon = new ImageView(this);
+        searchToggleIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        searchToggleIcon.setColorFilter(Color.WHITE);
+        searchToggleIcon.setPadding(dp(9), dp(9), dp(9), dp(9));
+        int searchResId = getResources().getIdentifier("search", "drawable", getPackageName());
+        if (searchResId != 0) {
+            searchToggleIcon.setImageResource(searchResId);
+        }
+        searchToggleBtn.addView(searchToggleIcon, new FrameLayout.LayoutParams(-1, -1));
+
+        searchToggleClose = new TextView(this);
+        searchToggleClose.setText("\u2715");
+        searchToggleClose.setTextColor(Color.WHITE);
+        searchToggleClose.setTextSize(16);
+        searchToggleClose.setGravity(Gravity.CENTER);
+        searchToggleClose.setVisibility(View.GONE);
+        searchToggleBtn.addView(searchToggleClose, new FrameLayout.LayoutParams(-1, -1));
 
         LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(40), dp(40));
         topBarLayout.addView(searchToggleBtn, toggleParams);
@@ -540,6 +591,7 @@ public class MainActivity extends AppCompatActivity {
         ));
         mainAppContainer.addView(rootLayout, new FrameLayout.LayoutParams(-1, -1));
 
+        buildSideMenu(mainAppContainer);
         buildSplashScreen(mainAppContainer);
 
         setContentView(mainAppContainer);
@@ -588,7 +640,7 @@ public class MainActivity extends AppCompatActivity {
         addControllerIconButton(buttonsRow, "picture_in_picture", "▣", "Mini Player", this::toggleInAppMiniPlayer);
 
         // 1b. Playback speed (using speed.png), placed between PiP and Rewind
-        addControllerIconButton(buttonsRow, "speed", "⏱", "Playback speed", this::showSpeedDialog);
+        speedButton = addControllerIconButton(buttonsRow, "speed", "⏱", "Playback speed", this::showSpeedDialog);
 
         // 2. Rewind 10s
         addControllerButton(buttonsRow, "◀◀", "Rewind 10s", this::rewind10s);
@@ -1953,17 +2005,332 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // ==========================================
+    // PLAYER SETTINGS (Video / Audio / Subtitle tabs)
+    // ==========================================
+
     private void showPlayerSettings() {
-        String[] options = {"Video resolution", "Audio tags", "Subtitle tracks"};
-        new AlertDialog.Builder(this)
+        if (player == null) return;
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BG_COLOR);
+
+        LinearLayout tabRow = new LinearLayout(this);
+        tabRow.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(tabRow, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout listArea = new LinearLayout(this);
+        listArea.setOrientation(LinearLayout.VERTICAL);
+        listArea.setPadding(dp(8), dp(4), dp(8), dp(8));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(listArea);
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, dp(280)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Player settings")
-                .setItems(options, (dialog, which) -> {
-                    switch (which) {
-                        case 0: showTrackSelection(C.TRACK_TYPE_VIDEO, "Video Resolution"); break;
-                        case 1: showTrackSelection(C.TRACK_TYPE_AUDIO, "Audio Tags"); break;
-                        case 2: showTrackSelection(C.TRACK_TYPE_TEXT, "Subtitle Tracks"); break;
-                    }
-                }).show();
+                .setView(root)
+                .setPositiveButton("Close", null)
+                .create();
+        renderSettingsTab(settingsTab, tabRow, listArea, dialog);
+        dialog.show();
+    }
+
+    private void renderSettingsTab(final int tab, final LinearLayout tabRow,
+                                   final LinearLayout listArea, final AlertDialog dialog) {
+        settingsTab = tab;
+
+        tabRow.removeAllViews();
+        String[] names = {"Video", "Audio", "Subtitle"};
+        for (int i = 0; i < names.length; i++) {
+            final int index = i;
+            boolean selected = index == tab;
+            TextView tabView = new TextView(this);
+            tabView.setText(names[i]);
+            tabView.setGravity(Gravity.CENTER);
+            tabView.setTextSize(15);
+            tabView.setPadding(0, dp(12), 0, dp(12));
+            tabView.setTextColor(selected ? Color.WHITE : Color.argb(160, 255, 255, 255));
+            tabView.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+            tabView.setBackgroundColor(selected ? Color.argb(70, 255, 255, 255) : Color.TRANSPARENT);
+            tabView.setFocusable(true);
+            tabView.setClickable(true);
+            tabView.setOnClickListener(v -> renderSettingsTab(index, tabRow, listArea, dialog));
+            tabRow.addView(tabView, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+
+        listArea.removeAllViews();
+        if (tab == 0) {
+            buildVideoOptions(listArea, tabRow, dialog);
+        } else if (tab == 1) {
+            buildAudioOptions(listArea, tabRow, dialog);
+        } else {
+            buildSubtitleOptions(listArea, tabRow, dialog);
+        }
+    }
+
+    private void addOptionRow(LinearLayout listArea, String label, boolean selected, Runnable onPick) {
+        TextView row = new TextView(this);
+        row.setText((selected ? "\u25CF  " : "\u25CB  ") + label);
+        row.setTextColor(selected ? Color.WHITE : Color.argb(200, 255, 255, 255));
+        row.setTextSize(15);
+        row.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.setFocusable(true);
+        row.setClickable(true);
+        row.setOnClickListener(v -> onPick.run());
+        listArea.addView(row, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void addInfoRow(LinearLayout listArea, String text) {
+        TextView row = new TextView(this);
+        row.setText(text);
+        row.setTextColor(Color.argb(160, 255, 255, 255));
+        row.setTextSize(14);
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        listArea.addView(row, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void buildVideoOptions(final LinearLayout listArea, final LinearLayout tabRow, final AlertDialog dialog) {
+        final TrackSelectionParameters params = player.getTrackSelectionParameters();
+        final Tracks tracks = player.getCurrentTracks();
+
+        boolean hasVideoOverride = false;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() == C.TRACK_TYPE_VIDEO && params.overrides.containsKey(g.getMediaTrackGroup())) {
+                hasVideoOverride = true;
+            }
+        }
+        addOptionRow(listArea, "Auto", !hasVideoOverride, () -> {
+            player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                    .build());
+            renderSettingsTab(0, tabRow, listArea, dialog);
+        });
+
+        int count = 0;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_VIDEO) continue;
+            for (int i = 0; i < g.length; i++) {
+                final Tracks.Group group = g;
+                final int trackIndex = i;
+                Format f = g.getTrackFormat(i);
+                String label = (f.width > 0 && f.height > 0)
+                        ? f.width + " \u00D7 " + f.height
+                        : "Video track " + (count + 1);
+                if (f.bitrate > 0) {
+                    label += ", " + String.format(Locale.US, "%.2f Mbps", f.bitrate / 1_000_000f);
+                }
+                boolean selected = params.overrides.containsKey(g.getMediaTrackGroup())
+                        && params.overrides.get(g.getMediaTrackGroup()).trackIndices.contains(i);
+                addOptionRow(listArea, label, selected, () -> {
+                    player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                            .addOverride(new TrackSelectionOverride(group.getMediaTrackGroup(), trackIndex))
+                            .build());
+                    renderSettingsTab(0, tabRow, listArea, dialog);
+                });
+                count++;
+            }
+        }
+        if (count == 0) {
+            addInfoRow(listArea, "No video tracks found");
+        }
+    }
+
+    private void buildAudioOptions(final LinearLayout listArea, final LinearLayout tabRow, final AlertDialog dialog) {
+        final TrackSelectionParameters params = player.getTrackSelectionParameters();
+        final Tracks tracks = player.getCurrentTracks();
+
+        boolean hasAudioOverride = false;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() == C.TRACK_TYPE_AUDIO && params.overrides.containsKey(g.getMediaTrackGroup())) {
+                hasAudioOverride = true;
+            }
+        }
+        addOptionRow(listArea, "Auto", !hasAudioOverride, () -> {
+            player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                    .build());
+            renderSettingsTab(1, tabRow, listArea, dialog);
+        });
+
+        int count = 0;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
+            for (int i = 0; i < g.length; i++) {
+                final Tracks.Group group = g;
+                final int trackIndex = i;
+                Format f = g.getTrackFormat(i);
+                String label = getTrackName(f);
+                if (label == null || label.trim().isEmpty()) {
+                    label = "Audio track " + (count + 1);
+                }
+                boolean selected = params.overrides.containsKey(g.getMediaTrackGroup())
+                        && params.overrides.get(g.getMediaTrackGroup()).trackIndices.contains(i);
+                addOptionRow(listArea, label, selected, () -> {
+                    player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                            .addOverride(new TrackSelectionOverride(group.getMediaTrackGroup(), trackIndex))
+                            .build());
+                    renderSettingsTab(1, tabRow, listArea, dialog);
+                });
+                count++;
+            }
+        }
+        if (count == 0) {
+            addInfoRow(listArea, "No audio tracks found");
+        }
+    }
+
+    private void buildSubtitleOptions(final LinearLayout listArea, final LinearLayout tabRow, final AlertDialog dialog) {
+        final TrackSelectionParameters params = player.getTrackSelectionParameters();
+        final Tracks tracks = player.getCurrentTracks();
+
+        boolean textOff = params.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT);
+        addOptionRow(listArea, "Off", textOff, () -> {
+            player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .build());
+            renderSettingsTab(2, tabRow, listArea, dialog);
+        });
+
+        int count = 0;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_TEXT) continue;
+            for (int i = 0; i < g.length; i++) {
+                final Tracks.Group group = g;
+                final int trackIndex = i;
+                Format f = g.getTrackFormat(i);
+                String label = getTrackName(f);
+                if (label == null || label.trim().isEmpty()) {
+                    label = "Subtitle track " + (count + 1);
+                }
+                boolean selected = !textOff
+                        && params.overrides.containsKey(g.getMediaTrackGroup())
+                        && params.overrides.get(g.getMediaTrackGroup()).trackIndices.contains(i);
+                addOptionRow(listArea, label, selected, () -> {
+                    player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .addOverride(new TrackSelectionOverride(group.getMediaTrackGroup(), trackIndex))
+                            .build());
+                    renderSettingsTab(2, tabRow, listArea, dialog);
+                });
+                count++;
+            }
+        }
+        if (count == 0) {
+            addInfoRow(listArea, "No subtitle tracks in this video");
+        }
+    }
+
+    // ==========================================
+    // SIDE MENU (opened from the header menu button)
+    // ==========================================
+
+    private void buildSideMenu(FrameLayout parent) {
+        sideMenuOverlay = new FrameLayout(this);
+        sideMenuOverlay.setBackgroundColor(Color.argb(150, 0, 0, 0));
+        sideMenuOverlay.setVisibility(View.GONE);
+        sideMenuOverlay.setClickable(true);
+        sideMenuOverlay.setOnClickListener(v -> closeSideMenu());
+
+        sideMenuPanel = new LinearLayout(this);
+        sideMenuPanel.setOrientation(LinearLayout.VERTICAL);
+        sideMenuPanel.setBackgroundColor(BG_COLOR);
+        sideMenuPanel.setPadding(dp(16), dp(40), dp(16), dp(16));
+        sideMenuPanel.setClickable(true); // keeps taps inside the panel from closing it
+        sideMenuPanel.setTranslationX(-dp(270));
+
+        TextView header = new TextView(this);
+        header.setText("RasVibe");
+        header.setTextColor(Color.WHITE);
+        header.setTextSize(20);
+        header.setTypeface(null, Typeface.BOLD);
+        header.setPadding(0, 0, 0, dp(20));
+        sideMenuPanel.addView(header, new LinearLayout.LayoutParams(-1, -2));
+
+        menuDisplayValue = addSideMenuRow("Video display", () -> {
+            cycleResizeMode();
+            refreshSideMenuValues();
+        });
+        menuPipValue = addSideMenuRow("Auto Picture-in-Picture", () -> {
+            autoPipEnabled = !autoPipEnabled;
+            refreshSideMenuValues();
+        });
+        menuSpeedValue = addSideMenuRow("Show speed button", () -> {
+            speedButtonVisible = !speedButtonVisible;
+            if (speedButton != null) {
+                speedButton.setVisibility(speedButtonVisible ? View.VISIBLE : View.GONE);
+            }
+            refreshSideMenuValues();
+        });
+
+        sideMenuOverlay.addView(sideMenuPanel, new FrameLayout.LayoutParams(dp(270), -1, Gravity.START));
+        parent.addView(sideMenuOverlay, new FrameLayout.LayoutParams(-1, -1));
+        refreshSideMenuValues();
+    }
+
+    private TextView addSideMenuRow(String label, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(14), dp(14), dp(14));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(180, 35, 48, 67));
+        bg.setCornerRadius(dp(12));
+        row.setBackground(bg);
+        row.setFocusable(true);
+        row.setClickable(true);
+
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextColor(Color.WHITE);
+        labelView.setTextSize(15);
+        row.addView(labelView, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        TextView value = new TextView(this);
+        value.setTextColor(Color.rgb(255, 210, 90));
+        value.setTextSize(14);
+        value.setTypeface(null, Typeface.BOLD);
+        row.addView(value, new LinearLayout.LayoutParams(-2, -2));
+
+        row.setOnClickListener(v -> action.run());
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.bottomMargin = dp(10);
+        sideMenuPanel.addView(row, params);
+        return value;
+    }
+
+    private void refreshSideMenuValues() {
+        if (menuDisplayValue != null) menuDisplayValue.setText(resizeModeName());
+        if (menuPipValue != null) menuPipValue.setText(autoPipEnabled ? "On" : "Off");
+        if (menuSpeedValue != null) menuSpeedValue.setText(speedButtonVisible ? "On" : "Off");
+    }
+
+    private String resizeModeName() {
+        if (resizeMode == 0) return "Fit";
+        if (resizeMode == 1) return "Fill";
+        return "Zoom";
+    }
+
+    private void openSideMenu() {
+        if (sideMenuOverlay == null || sideMenuPanel == null) return;
+        refreshSideMenuValues();
+        sideMenuOverlay.setVisibility(View.VISIBLE);
+        sideMenuPanel.animate().translationX(0).setDuration(200).start();
+    }
+
+    private void closeSideMenu() {
+        if (sideMenuOverlay == null || sideMenuPanel == null) return;
+        sideMenuPanel.animate().translationX(-dp(270)).setDuration(200)
+                .withEndAction(() -> sideMenuOverlay.setVisibility(View.GONE))
+                .start();
     }
 
     // ==========================================
@@ -2567,7 +2934,7 @@ public class MainActivity extends AppCompatActivity {
         super.onUserLeaveHint();
         // Auto-enter PiP when Home button/gesture is pressed while video is playing (Android 8.0+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (player != null && (player.isPlaying() || player.getPlayWhenReady())) {
+            if (autoPipEnabled && player != null && (player.isPlaying() || player.getPlayWhenReady())) {
                 enterPictureInPicture();
             }
         }
@@ -2796,26 +3163,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Shows search.png (drawable) when closed, and a ✕ text when open
+    // Shows the search icon when closed, and a ✕ when open
     private void applySearchToggleIcon(boolean isOpen) {
-        if (searchToggleBtn == null) return;
-        if (isOpen) {
-            searchToggleBtn.setCompoundDrawables(null, null, null, null);
-            searchToggleBtn.setText("✕");
-            searchToggleBtn.setTextSize(16);
-            return;
-        }
-        searchToggleBtn.setText("");
-        searchToggleBtn.setTextSize(18);
-        int resId = getResources().getIdentifier("search", "drawable", getPackageName());
-        if (resId != 0) {
-            Drawable icon = getResources().getDrawable(resId);
-            icon.setBounds(0, 0, dp(22), dp(22));
-            icon.setTint(Color.WHITE);
-            searchToggleBtn.setCompoundDrawables(icon, null, null, null);
-        } else {
-            searchToggleBtn.setText("🔍");
-        }
+        if (searchToggleIcon != null) searchToggleIcon.setVisibility(isOpen ? View.GONE : View.VISIBLE);
+        if (searchToggleClose != null) searchToggleClose.setVisibility(isOpen ? View.VISIBLE : View.GONE);
     }
 
     private void closeSearch() {
