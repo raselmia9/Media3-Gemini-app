@@ -302,6 +302,7 @@ public class MainActivity extends AppCompatActivity {
                                 player.stop();
                             }
                             playerContainer.setVisibility(View.GONE);
+                            updatePipParams();
                             hideEpisodeButtons();
                         } else if (eventWebView != null && eventWebView.canGoBack()) {
                             eventWebView.goBack();
@@ -443,6 +444,7 @@ public class MainActivity extends AppCompatActivity {
         playerContainer.setClickable(true);
         playerContainer.setOnClickListener(v -> toggleControls());
         playerContainer.setVisibility(View.GONE);
+        updatePipParams();
 
         playerView = new PlayerView(this);
         // Disable ExoPlayer default built-in controls completely
@@ -1443,6 +1445,7 @@ public class MainActivity extends AppCompatActivity {
         }
         if (playerContainer != null) {
             playerContainer.setVisibility(View.VISIBLE);
+            updatePipParams();
         }
         if (inputScroll != null && !isMiniPlayerActive) {
             inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.70f));
@@ -2597,6 +2600,7 @@ public class MainActivity extends AppCompatActivity {
 
         mainAppContainer.addView(playerContainer, miniParams);
         playerContainer.setVisibility(View.VISIBLE);
+        updatePipParams();
 
         // Show mini controls overlay with auto-hide
         if (miniControlsOverlay != null) {
@@ -2661,6 +2665,8 @@ public class MainActivity extends AppCompatActivity {
         }
 
         playerContainer.setVisibility(View.VISIBLE);
+
+        updatePipParams();
         resetAutoHide();
         setStatus("Normal Mode");
     }
@@ -2701,6 +2707,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (playerContainer != null) {
             playerContainer.setVisibility(View.GONE);
+            updatePipParams();
         }
 
         if (inputScroll != null) {
@@ -2742,7 +2749,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                builder.setAutoEnterEnabled(player != null && (player.isPlaying() || player.getPlayWhenReady()));
+                builder.setAutoEnterEnabled(canAutoEnterPip());
             }
 
             setPictureInPictureParams(builder.build());
@@ -2773,11 +2780,23 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // Auto PiP only when video is really playing and visible.
+    // Stopped, paused, cleared, ended or hidden video must NOT enter PiP.
+    private boolean canAutoEnterPip() {
+        if (player == null || playerContainer == null) return false;
+        if (playerContainer.getVisibility() != View.VISIBLE) return false;
+        if (player.getMediaItemCount() == 0) return false;
+        int state = player.getPlaybackState();
+        if (state == androidx.media3.common.Player.STATE_IDLE
+                || state == androidx.media3.common.Player.STATE_ENDED) return false;
+        return player.isPlaying();
+    }
+
     private void enterPictureInPicture() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return;
         }
-        if (player == null || player.getMediaItemCount() == 0) {
+        if (!canAutoEnterPip()) {
             return;
         }
         try {
@@ -2812,6 +2831,7 @@ public class MainActivity extends AppCompatActivity {
 
             setPlayerContainerMatchParent();
             playerContainer.setVisibility(View.VISIBLE);
+            updatePipParams();
 
             Rational aspectRatio = new Rational(16, 9);
             if (player != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
@@ -2833,7 +2853,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                builder.setAutoEnterEnabled(true);
+                builder.setAutoEnterEnabled(canAutoEnterPip());
             }
 
             enterPictureInPictureMode(builder.build());
@@ -2934,7 +2954,8 @@ public class MainActivity extends AppCompatActivity {
         super.onUserLeaveHint();
         // Auto-enter PiP when Home button/gesture is pressed while video is playing (Android 8.0+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (autoPipEnabled && player != null && (player.isPlaying() || player.getPlayWhenReady())) {
+            updatePipParams();
+            if (autoPipEnabled && canAutoEnterPip()) {
                 enterPictureInPicture();
             }
         }
@@ -2988,6 +3009,7 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 if (playerContainer != null) {
                     playerContainer.setVisibility(View.GONE);
+                    updatePipParams();
                 }
             }
             loadPlaylistHtml(targetUrl);
@@ -3027,6 +3049,7 @@ public class MainActivity extends AppCompatActivity {
             setStatus("Playing from web content");
             if (playerContainer != null) {
                 playerContainer.setVisibility(View.VISIBLE);
+                updatePipParams();
             }
             playStream();
         }
@@ -3102,6 +3125,7 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 if (playerContainer != null) {
                     playerContainer.setVisibility(View.GONE);
+                    updatePipParams();
                 }
             }
             loadPlaylistHtml(targetUrl);
@@ -3119,6 +3143,7 @@ public class MainActivity extends AppCompatActivity {
         // Make player visible and auto-play selected episode
         if (playerContainer != null) {
             playerContainer.setVisibility(View.VISIBLE);
+            updatePipParams();
         }
         playStream();
     }
@@ -3635,6 +3660,7 @@ public class MainActivity extends AppCompatActivity {
         setStatus("Playing external stream");
         if (playerContainer != null) {
             playerContainer.setVisibility(View.VISIBLE);
+            updatePipParams();
         }
         playStream();
     }
