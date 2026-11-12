@@ -54,6 +54,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.media3.common.VideoSize;
@@ -250,12 +251,35 @@ public class MainActivity extends AppCompatActivity {
     // LIFECYCLE
     // ==========================================
 
+    // Lock font scale so text keeps the same size whatever the phone's font setting is
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        Configuration config = new Configuration(newBase.getResources().getConfiguration());
+        config.fontScale = 1.0f;
+        super.attachBaseContext(newBase.createConfigurationContext(config));
+    }
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        getWindow().setStatusBarColor(BG_COLOR);
-        getWindow().setNavigationBarColor(BG_COLOR);
+        // Edge-to-edge: bars are transparent and the app draws behind them
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        WindowInsetsControllerCompat barIcons =
+                new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
+        barIcons.setAppearanceLightStatusBars(false);
+        barIcons.setAppearanceLightNavigationBars(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams cutoutAttrs = getWindow().getAttributes();
+            cutoutAttrs.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(cutoutAttrs);
+        }
+
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
 
         getWindow().addFlags(
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -330,7 +354,7 @@ public class MainActivity extends AppCompatActivity {
         rootLayout = new LinearLayout(this);
         rootLayout.setOrientation(LinearLayout.VERTICAL);
         rootLayout.setBackgroundColor(BG_COLOR);
-        rootLayout.setFitsSystemWindows(true);
+        rootLayout.setFitsSystemWindows(false);
 
         // Top Bar (Horizontal: App Title / Search Input + Search/Close Toggle Button)
         topBarLayout = new LinearLayout(this);
@@ -597,6 +621,19 @@ public class MainActivity extends AppCompatActivity {
         buildSplashScreen(mainAppContainer);
 
         setContentView(mainAppContainer);
+
+        // Pad the content away from system bars and cutouts in normal mode;
+        // in fullscreen the player gets the whole screen, edge to edge.
+        ViewCompat.setOnApplyWindowInsetsListener(mainAppContainer, (v, insets) -> {
+            androidx.core.graphics.Insets bars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            if (fullscreen) {
+                rootLayout.setPadding(0, 0, 0, 0);
+            } else {
+                rootLayout.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            }
+            return insets;
+        });
         scheduleSplashDismiss();
     }
 
@@ -1937,8 +1974,9 @@ public class MainActivity extends AppCompatActivity {
     private void applyFullscreenSystemUi(boolean isFull) {
         try {
             if (rootLayout != null) {
-                rootLayout.setFitsSystemWindows(!isFull);
-                rootLayout.requestApplyInsets();
+                rootLayout.setFitsSystemWindows(false);
+                if (isFull) rootLayout.setPadding(0, 0, 0, 0);
+                if (mainAppContainer != null) ViewCompat.requestApplyInsets(mainAppContainer);
             }
             WindowInsetsControllerCompat controller =
                     new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
@@ -1973,8 +2011,8 @@ public class MainActivity extends AppCompatActivity {
                 controller.show(WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.navigationBars());
 
                 getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-                getWindow().setStatusBarColor(BG_COLOR);
-                getWindow().setNavigationBarColor(BG_COLOR);
+                getWindow().setStatusBarColor(Color.TRANSPARENT);
+                getWindow().setNavigationBarColor(Color.TRANSPARENT);
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     WindowManager.LayoutParams attrs = getWindow().getAttributes();
@@ -2781,7 +2819,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // Auto PiP only when video is really playing and visible.
-    // Stopped, paused, cleared, ended or hidden video must NOT enter PiP.
     private boolean canAutoEnterPip() {
         if (player == null || playerContainer == null) return false;
         if (playerContainer.getVisibility() != View.VISIBLE) return false;
