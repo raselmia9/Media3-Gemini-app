@@ -15,7 +15,7 @@
 
         <item name="android:windowActionModeOverlay">true</item>
 
-        <item name="android:windowBackground">#090D16</item>
+        <item name="android:windowBackground">#121826</item>
 
     </style>
 </resources>
