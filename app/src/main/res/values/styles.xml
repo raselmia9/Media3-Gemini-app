@@ -5,9 +5,11 @@
 
         <item name="android:colorAccent">#55C2FF</item>
 
-        <item name="android:statusBarColor">#090D16</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:enforceStatusBarContrast">false</item>
 
-        <item name="android:navigationBarColor">#090D16</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
 
         <item name="android:windowLightStatusBar">false</item>
 
