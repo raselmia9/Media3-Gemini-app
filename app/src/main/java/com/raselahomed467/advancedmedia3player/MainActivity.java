@@ -1,4 +1,1195 @@
-) - 10000);
+package com.raselahomed467.advancedmedia3player;
+
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Typeface;
+import android.graphics.Outline;
+import android.view.ViewOutlineProvider;
+
+import android.provider.Settings;
+import android.media.AudioManager;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
+import android.view.GestureDetector;
+import android.app.AlertDialog;
+import android.app.PictureInPictureParams;
+import android.content.pm.ActivityInfo;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Base64;
+import android.util.DisplayMetrics;
+import android.util.Rational;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewParent;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
+import android.webkit.WebView;
+import android.webkit.WebSettings;
+import android.webkit.WebViewClient;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.ScrollView;
+import android.widget.ImageView;
+import java.util.ArrayList;
+import java.util.List;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.SeekBar;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.media3.common.VideoSize;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.TrackSelectionParameters;
+import androidx.media3.common.Tracks;
+import androidx.activity.OnBackPressedCallback;
+import androidx.media3.common.C;
+import androidx.media3.common.Format;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
+import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.ChannelMixingAudioProcessor;
+import androidx.media3.common.audio.ChannelMixingMatrix;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.okhttp.OkHttpDataSource;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
+import androidx.media3.exoplayer.audio.AudioSink;
+import androidx.media3.exoplayer.audio.DefaultAudioSink;
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager;
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManagerProvider;
+import androidx.media3.exoplayer.drm.DrmSessionManager;
+import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
+import androidx.media3.exoplayer.drm.LocalMediaDrmCallback;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.ui.AspectRatioFrameLayout;
+import androidx.media3.ui.PlayerView;
+import androidx.media3.ui.TrackSelectionDialogBuilder;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.util.concurrent.TimeUnit;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+
+@UnstableApi
+public class MainActivity extends AppCompatActivity {
+
+    private ExoPlayer player;
+    private PlayerView playerView;
+
+    private LinearLayout rootLayout;
+    private LinearLayout topBarLayout;
+    private TextView titleBar;
+    private EditText searchEditText;
+    private FrameLayout searchToggleBtn;
+    private ImageView searchToggleIcon;
+    private TextView searchToggleClose;
+    private FrameLayout sideMenuOverlay;
+    private LinearLayout sideMenuPanel;
+    private TextView menuDisplayValue, menuPipValue, menuSpeedValue;
+    private ImageView speedButton;
+    private boolean speedButtonVisible = true;
+    private boolean autoPipEnabled = true;
+    private int settingsTab = 0;
+    private boolean isSearchOpen = false;
+    private LinearLayout inputScroll;
+    private WebView eventWebView;
+    private WebView playlistWebView;
+    private FrameLayout webContentContainer;
+    private volatile String cachedPlaylistTemplate = null;
+    private volatile boolean isPlaylistViewActive = false;
+    private Thread playlistLoadThread = null;
+    private Thread htmlLoadThread;
+
+    private static final String CACHED_EVENT_HTML_FILE = "cached_event_code.html";
+    private static final String CACHED_PLAYLIST_HTML_FILE = "cached_playlist.html";
+    private static final String EVENT_HTML_URL = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/EventCode.html";
+    private static final String PLAYLIST_HTML_URL = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/Playlist.html";
+    private boolean isEventHtmlLoaded = false;
+
+    private FrameLayout playerContainer;
+    private FrameLayout customControlsOverlay;
+    private LinearLayout bottomPanel;
+    private TextView btnPlayPause;
+    private ImageView fullscreenButton;
+    private SeekBar customSeekBar;
+    private TextView timeCurrent;
+    private TextView timeDuration;
+    private ProgressBar bufferingProgress;
+
+    // Splash Screen & Deep Link
+    // In-App Miniplayer (Floating PiP inside app)
+    private FrameLayout mainAppContainer;
+    private FrameLayout miniControlsOverlay;
+    private LinearLayout miniTopBar;
+    private TextView btnMiniExpand;
+    private TextView btnMiniClose;
+    private TextView btnMiniPlayPause;
+    private Drawable miniVignetteDrawable;
+    private boolean isMiniPlayerActive = false;
+    private boolean isMiniControlsVisible = true;
+    private boolean wasMiniPlayerBeforePip = false;
+    private boolean wasFullscreenBeforePip = false;
+    private final Runnable miniAutoHideRunnable = this::hideMiniControls;
+
+    private FrameLayout splashLayout;
+    private boolean isSplashDismissed = false;
+    private long splashStartTime = 0;
+    private final Runnable splashDismissRunnable = this::dismissSplashScreen;
+
+    // Gesture detection & Center HUD
+    private GestureDetector gestureDetector;
+    private ScaleGestureDetector scaleGestureDetector;
+    private float currentScaleX = 1.0f;
+    private float currentScaleY = 1.0f;
+    private int scaleDirection = 0; // 0 = none, 1 = horizontal, 2 = vertical
+    private FrameLayout gestureHudCard;
+    private TextView gestureHudIcon;
+    private TextView gestureHudText;
+    private ProgressBar gestureHudProgress;
+    private final Handler gestureHudHandler = new Handler(Looper.getMainLooper());
+    private final Runnable hideGestureHudRunnable = () -> {
+        if (gestureHudCard != null) {
+            gestureHudCard.animate()
+                    .alpha(0f)
+                    .setDuration(220)
+                    .withEndAction(() -> {
+                        gestureHudCard.setVisibility(View.GONE);
+                        gestureHudCard.setAlpha(1f);
+                    })
+                    .start();
+        }
+    };
+
+    // Tracking swipe for Volume & Brightness
+    private boolean isSwipeGestureActive = false;
+    private boolean isSwipeVolume = false;
+    private float swipeStartY = 0f;
+    private float swipeStartX = 0f;
+    private int initialVolume = 0;
+    private float initialBrightness = 0.5f;
+
+    private EditText urlInput;
+    private TextView statusText;
+
+    private HorizontalScrollView episodesScroll;
+    private LinearLayout episodesContainer;
+    private final List<TextView> episodeButtonViews = new ArrayList<>();
+
+    private boolean fullscreen = false;
+    private int navBottomInset = 0;
+    private int resizeMode = 1; // default: FILL so video covers the whole player
+
+    private boolean isControlsVisible = true;
+    private boolean isUserSeeking = false;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+
+    private final Runnable autoHideRunnable = this::hideControls;
+
+    private final Runnable updateProgressRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (player != null && !isUserSeeking) {
+                long pos = Math.max(0, player.getCurrentPosition());
+                long dur = Math.max(0, player.getDuration());
+
+                if (dur > 0) {
+                    customSeekBar.setMax((int) dur);
+                    customSeekBar.setProgress((int) pos);
+                    timeCurrent.setText(formatTime(pos));
+                    timeDuration.setText(formatTime(dur));
+                } else {
+                    timeCurrent.setText(formatTime(pos));
+                    timeDuration.setText("LIVE");
+                }
+
+                if (btnPlayPause != null) {
+                    btnPlayPause.setText(player.isPlaying() ? "❚❚" : "▶");
+                }
+                if (btnMiniPlayPause != null) {
+                    btnMiniPlayPause.setText(player.isPlaying() ? "❚❚" : "▶");
+                }
+            }
+            handler.postDelayed(this, 800);
+        }
+    };
+
+    private static final int BG_COLOR = Color.rgb(18, 24, 38);
+    private static final int PRIMARY_COLOR = Color.rgb(41, 128, 255);
+    private static final int BUTTON_COLOR = Color.rgb(33, 44, 61);
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    // ==========================================
+    // LIFECYCLE
+    // ==========================================
+
+    // Lock font scale so text keeps the same size whatever the phone's font setting is
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        Configuration config = new Configuration(newBase.getResources().getConfiguration());
+        config.fontScale = 1.0f;
+        // Same dp scale on every phone: the short side is always 360dp wide
+        DisplayMetrics dm = newBase.getResources().getDisplayMetrics();
+        int shortSidePx = Math.min(dm.widthPixels, dm.heightPixels);
+        if (shortSidePx > 0) {
+            config.densityDpi = Math.max(120, Math.round(shortSidePx * 160f / 360f));
+        }
+        super.attachBaseContext(newBase.createConfigurationContext(config));
+    }
+
+    @Override
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        // Edge-to-edge: bars are transparent and the app draws behind them
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+            getWindow().setStatusBarContrastEnforced(false);
+        }
+        WindowInsetsControllerCompat barIcons =
+                new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
+        barIcons.setAppearanceLightStatusBars(false);
+        barIcons.setAppearanceLightNavigationBars(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams cutoutAttrs = getWindow().getAttributes();
+            cutoutAttrs.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(cutoutAttrs);
+        }
+
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+
+        getWindow().addFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        );
+
+        getWindow().setSoftInputMode(
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        );
+
+        initGestureDetectors();
+        buildScreen();
+        initializePlayer();
+
+        handler.post(updateProgressRunnable);
+
+        handleIncomingIntent(getIntent());
+
+        getOnBackPressedDispatcher().addCallback(
+                this,
+                new OnBackPressedCallback(true) {
+                    @Override
+                    public void handleOnBackPressed() {
+                        if (splashLayout != null && splashLayout.getVisibility() == View.VISIBLE && !isSplashDismissed) {
+                            dismissSplashScreen();
+                        } else if (sideMenuOverlay != null && sideMenuOverlay.getVisibility() == View.VISIBLE) {
+                            closeSideMenu();
+                        } else if (isSearchOpen) {
+                            closeSearch();
+                        } else if (fullscreen) {
+                            toggleFullscreen();
+                        } else if (!isMiniPlayerActive && player != null && playerContainer != null
+                                && playerContainer.getVisibility() == View.VISIBLE
+                                && (player.isPlaying() || player.getPlayWhenReady())) {
+                            // YouTube-style In-App Miniplayer: Back shrinks video to floating miniplayer without minimizing the app!
+                            enterInAppMiniPlayer();
+                        } else if (isPlaylistViewActive) {
+                            // Close playlist tab and return to Home (mini player stays playing if active!)
+                            closePlaylistTab();
+                        } else if (isMiniPlayerActive) {
+                            // Back while in miniplayer on Home -> close the miniplayer
+                            closeMiniPlayer();
+                        } else if (playerContainer != null && playerContainer.getVisibility() == View.VISIBLE) {
+                            if (player != null) {
+                                player.stop();
+                            }
+                            playerContainer.setVisibility(View.GONE);
+                            updatePipParams();
+                            hideEpisodeButtons();
+                        } else if (eventWebView != null && eventWebView.canGoBack()) {
+                            eventWebView.goBack();
+                        } else {
+                            finish();
+                        }
+                    }
+                }
+        );
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
+    }
+
+    // ==========================================
+    // BUILD USER INTERFACE
+    // ==========================================
+
+    private void buildScreen() {
+
+        rootLayout = new LinearLayout(this);
+        rootLayout.setOrientation(LinearLayout.VERTICAL);
+        rootLayout.setBackgroundColor(BG_COLOR);
+        rootLayout.setFitsSystemWindows(false);
+
+        // Top Bar (Horizontal: App Title / Search Input + Search/Close Toggle Button)
+        topBarLayout = new LinearLayout(this);
+        topBarLayout.setOrientation(LinearLayout.HORIZONTAL);
+        topBarLayout.setGravity(Gravity.CENTER_VERTICAL);
+        topBarLayout.setPadding(dp(16), dp(6), dp(16), dp(6));
+
+        // 0. Side menu button (menu.png) at the far left of the header
+        ImageView menuBtn = new ImageView(this);
+        menuBtn.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        menuBtn.setColorFilter(Color.WHITE);
+        menuBtn.setPadding(dp(9), dp(9), dp(9), dp(9));
+        int menuResId = getResources().getIdentifier("menu", "drawable", getPackageName());
+        if (menuResId != 0) {
+            menuBtn.setImageResource(menuResId);
+        }
+        menuBtn.setContentDescription("Menu");
+        menuBtn.setFocusable(true);
+        menuBtn.setClickable(true);
+        GradientDrawable menuBg = new GradientDrawable();
+        menuBg.setColor(Color.argb(160, 35, 48, 67));
+        menuBg.setCornerRadius(dp(10));
+        menuBtn.setBackground(menuBg);
+        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        menuParams.rightMargin = dp(10);
+        topBarLayout.addView(menuBtn, menuParams);
+        menuBtn.setOnClickListener(v -> openSideMenu());
+
+        // 1. App Title (RasVibe)
+        titleBar = new TextView(this);
+        titleBar.setText("RasVibe");
+        titleBar.setTextColor(Color.WHITE);
+        titleBar.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
+        titleBar.setGravity(Gravity.CENTER_VERTICAL);
+        titleBar.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        topBarLayout.addView(titleBar, titleParams);
+
+        // 2. Search EditText (Hidden by default, shown when search toggle is clicked)
+        searchEditText = new EditText(this);
+        searchEditText.setHint("Search movies, matches...");
+        searchEditText.setHintTextColor(Color.argb(130, 255, 255, 255));
+        searchEditText.setTextColor(Color.WHITE);
+        searchEditText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        searchEditText.setSingleLine(true);
+        searchEditText.setVisibility(View.GONE);
+
+        GradientDrawable searchBg = new GradientDrawable();
+        searchBg.setColor(Color.argb(160, 30, 42, 58));
+        searchBg.setCornerRadius(dp(10));
+        searchBg.setStroke(dp(1), Color.argb(50, 255, 255, 255));
+        searchEditText.setBackground(searchBg);
+        searchEditText.setPadding(dp(14), 0, dp(14), 0);
+
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(0, dp(38), 1f);
+        searchParams.rightMargin = dp(10);
+        topBarLayout.addView(searchEditText, searchParams);
+
+        // Realtime Web Search as user types
+        searchEditText.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filterWebView(s != null ? s.toString() : "");
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+
+        // 3. Search / Close Toggle Button on the far right
+        searchToggleBtn = new FrameLayout(this);
+        searchToggleBtn.setFocusable(true);
+        searchToggleBtn.setClickable(true);
+
+        GradientDrawable toggleBg = new GradientDrawable();
+        toggleBg.setColor(Color.argb(160, 35, 48, 67));
+        toggleBg.setCornerRadius(dp(10));
+        searchToggleBtn.setBackground(toggleBg);
+
+        searchToggleIcon = new ImageView(this);
+        searchToggleIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        searchToggleIcon.setColorFilter(Color.WHITE);
+        searchToggleIcon.setPadding(dp(9), dp(9), dp(9), dp(9));
+        int searchResId = getResources().getIdentifier("search", "drawable", getPackageName());
+        if (searchResId != 0) {
+            searchToggleIcon.setImageResource(searchResId);
+        }
+        searchToggleBtn.addView(searchToggleIcon, new FrameLayout.LayoutParams(-1, -1));
+
+        searchToggleClose = new TextView(this);
+        searchToggleClose.setText("\u2715");
+        searchToggleClose.setTextColor(Color.WHITE);
+        searchToggleClose.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+        searchToggleClose.setGravity(Gravity.CENTER);
+        searchToggleClose.setVisibility(View.GONE);
+        searchToggleBtn.addView(searchToggleClose, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        topBarLayout.addView(searchToggleBtn, toggleParams);
+
+        searchToggleBtn.setOnClickListener(v -> toggleSearch());
+
+        rootLayout.addView(topBarLayout, new LinearLayout.LayoutParams(-1, dp(52)));
+
+        // Player Container (Initially hidden until a video link is selected)
+        playerContainer = new FrameLayout(this);
+        playerContainer.setBackgroundColor(Color.BLACK);
+        playerContainer.setClickable(true);
+        playerContainer.setOnClickListener(v -> toggleControls());
+        playerContainer.setVisibility(View.GONE);
+        updatePipParams();
+
+        playerView = new PlayerView(this);
+        // Disable ExoPlayer default built-in controls completely
+        playerView.setUseController(false);
+        playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);
+        playerView.setBackgroundColor(Color.BLACK);
+        playerView.setClickable(true);
+        playerView.setOnClickListener(v -> toggleControls());
+        playerContainer.addView(playerView, new FrameLayout.LayoutParams(-1, -1));
+
+        // Buffering Indicator in center
+        bufferingProgress = new ProgressBar(this);
+        bufferingProgress.setIndeterminate(true);
+        bufferingProgress.setVisibility(View.GONE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            bufferingProgress.setIndeterminateTintList(
+                    ColorStateList.valueOf(Color.rgb(85, 194, 255))
+            );
+        }
+        FrameLayout.LayoutParams bufferParams = new FrameLayout.LayoutParams(
+                dp(48), dp(48), Gravity.CENTER
+        );
+        playerContainer.addView(bufferingProgress, bufferParams);
+
+        // Custom Controller Overlay
+        buildCustomControls();
+        playerContainer.addView(customControlsOverlay, new FrameLayout.LayoutParams(-1, -1));
+
+        // In-App Miniplayer Controls Overlay
+        buildMiniControls();
+
+        // Center Gesture Notification HUD
+        buildGestureHud();
+        playerContainer.addView(gestureHudCard, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+
+        rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.30f));
+
+        // Bottom Section: URL input + Play button + Web content
+        inputScroll = new LinearLayout(this);
+        inputScroll.setOrientation(LinearLayout.VERTICAL);
+        inputScroll.setBackgroundColor(BG_COLOR);
+
+        // Dynamic Episode / Multi-Link Buttons Horizontal Row
+        episodesScroll = new HorizontalScrollView(this);
+        episodesScroll.setHorizontalScrollBarEnabled(false);
+        episodesScroll.setPadding(dp(14), dp(8), dp(14), dp(4));
+        episodesScroll.setVisibility(View.GONE);
+
+        episodesContainer = new LinearLayout(this);
+        episodesContainer.setOrientation(LinearLayout.HORIZONTAL);
+        episodesScroll.addView(episodesContainer, new FrameLayout.LayoutParams(-2, -2));
+
+        inputScroll.addView(episodesScroll, new LinearLayout.LayoutParams(-1, -2));
+
+        // Header container for Input & Status (Permanently hidden per user requirement)
+        LinearLayout inputHeader = new LinearLayout(this);
+        inputHeader.setOrientation(LinearLayout.VERTICAL);
+        inputHeader.setPadding(dp(14), dp(8), dp(14), dp(6));
+        inputHeader.setVisibility(View.GONE);
+
+        inputHeader.addView(sectionTitle("STREAM / DRM / REQUEST SETTINGS"),
+                new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout inputRow = new LinearLayout(this);
+        inputRow.setOrientation(LinearLayout.HORIZONTAL);
+        inputRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        urlInput = new EditText(this);
+        urlInput.setSingleLine(false);
+        urlInput.setMinLines(2);
+        urlInput.setMaxLines(3);
+        urlInput.setHint("Video URL | Referer=...&Cookie=...");
+        urlInput.setTextColor(Color.WHITE);
+        urlInput.setHintTextColor(Color.GRAY);
+        urlInput.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+        urlInput.setPadding(dp(12), dp(8), dp(10), dp(8));
+        urlInput.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(75, 95, 120)));
+        LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(0, dp(72), 1f);
+        urlParams.rightMargin = dp(8);
+        inputRow.addView(urlInput, urlParams);
+
+        TextView playButton = makeActionButton("▶ PLAY", true);
+        playButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+        playButton.setOnClickListener(v -> playStream());
+        inputRow.addView(playButton, new LinearLayout.LayoutParams(dp(92), dp(52)));
+        inputHeader.addView(inputRow, new LinearLayout.LayoutParams(-1, -2));
+
+        statusText = new TextView(this);
+        statusText.setText("Ready - Enter a stream URL or choose an item below");
+        statusText.setTextColor(Color.LTGRAY);
+        statusText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
+        statusText.setPadding(dp(3), dp(4), dp(3), dp(4));
+        inputHeader.addView(statusText, new LinearLayout.LayoutParams(-1, -2));
+
+        inputScroll.addView(inputHeader, new LinearLayout.LayoutParams(-1, -2));
+
+        // Separate in-memory WebViews act as Home and Playlist tabs.
+        webContentContainer = new FrameLayout(this);
+        LinearLayout.LayoutParams webContainerParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        webContainerParams.setMargins(0, 0, 0, 0);
+        HtmlItemBridge bridge = new HtmlItemBridge();
+
+        eventWebView = new WebView(this);
+        configureWebViewSettings(eventWebView);
+        eventWebView.addJavascriptInterface(bridge, "CustomWebView");
+        eventWebView.addJavascriptInterface(bridge, "AppInventor");
+        webContentContainer.addView(eventWebView, new FrameLayout.LayoutParams(-1, -1));
+
+        playlistWebView = new WebView(this);
+        configureWebViewSettings(playlistWebView);
+        playlistWebView.setVisibility(View.GONE);
+        playlistWebView.addJavascriptInterface(bridge, "CustomWebView");
+        playlistWebView.addJavascriptInterface(bridge, "AppInventor");
+        webContentContainer.addView(playlistWebView, new FrameLayout.LayoutParams(-1, -1));
+
+        inputScroll.addView(webContentContainer, webContainerParams);
+
+        // Instantly load cached EventCode.html from local storage if available
+        String cachedHtml = loadHtmlFromLocal(CACHED_EVENT_HTML_FILE);
+        if (cachedHtml != null && !cachedHtml.trim().isEmpty()) {
+            isEventHtmlLoaded = true;
+            eventWebView.loadDataWithBaseURL(
+                    "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/",
+                    cachedHtml,
+                    "text/html",
+                    "UTF-8",
+                    null
+            );
+        }
+
+        // Also check if cached Playlist template exists
+        String cachedPlaylist = loadHtmlFromLocal(CACHED_PLAYLIST_HTML_FILE);
+        if (cachedPlaylist != null && !cachedPlaylist.trim().isEmpty()) {
+            cachedPlaylistTemplate = cachedPlaylist;
+        }
+
+        // Fetch and update templates in background during splash screen
+        preloadHtmlTemplates();
+
+        rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.70f));
+
+        mainAppContainer = new FrameLayout(this);
+        mainAppContainer.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        mainAppContainer.addView(rootLayout, new FrameLayout.LayoutParams(-1, -1));
+
+        buildSideMenu(mainAppContainer);
+        buildSplashScreen(mainAppContainer);
+
+        setContentView(mainAppContainer);
+
+        // Pad the content away from system bars and cutouts in normal mode;
+        // in fullscreen the player gets the whole screen, edge to edge.
+        ViewCompat.setOnApplyWindowInsetsListener(mainAppContainer, (v, insets) -> {
+            androidx.core.graphics.Insets bars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            int imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+            if (fullscreen) {
+                navBottomInset = 0;
+                rootLayout.setPadding(0, 0, 0, 0);
+                inputScroll.setPadding(0, 0, 0, 0);
+            } else {
+                navBottomInset = bars.bottom;
+                // Top, left, right: keep clear of status bar and cutouts
+                rootLayout.setPadding(bars.left, bars.top, bars.right, 0);
+                // Bottom: the background runs behind the nav bar; the input area stops above it or the keyboard
+                inputScroll.setPadding(0, 0, 0, Math.max(bars.bottom, imeBottom));
+            }
+            return insets;
+        });
+        scheduleSplashDismiss();
+    }
+
+    // ==========================================
+    // CUSTOM CONTROLLER & TIMELINE OVERLAY
+    // ==========================================
+
+    private void buildCustomControls() {
+        customControlsOverlay = new FrameLayout(this);
+        customControlsOverlay.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+        customControlsOverlay.setClickable(true);
+        customControlsOverlay.setFocusable(true);
+
+        // Setup gestures (Single-tap, Double-tap seek, Swipe Volume/Brightness, Two-finger Zoom)
+        setupOverlayGestures();
+
+        bottomPanel = new LinearLayout(this);
+        bottomPanel.setOrientation(LinearLayout.VERTICAL);
+
+        GradientDrawable shadowGradient = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.TRANSPARENT, Color.argb(140, 0, 0, 0), Color.argb(220, 0, 0, 0)}
+        );
+        bottomPanel.setBackground(shadowGradient);
+        bottomPanel.setPadding(dp(12), dp(10), dp(12), dp(8));
+        bottomPanel.setClickable(true);
+        bottomPanel.setOnClickListener(v -> resetAutoHide());
+
+        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
+                -1, -2, Gravity.BOTTOM
+        );
+        customControlsOverlay.addView(bottomPanel, bottomParams);
+
+        // ------------------------------------------
+        // ROW 1: BUTTONS ROW (ALL HORIZONTAL)
+        // ------------------------------------------
+        LinearLayout buttonsRow = new LinearLayout(this);
+        buttonsRow.setOrientation(LinearLayout.HORIZONTAL);
+        buttonsRow.setGravity(Gravity.CENTER);
+        buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+
+        // 1. Picture in Picture (PiP) Mode Icon (using picture_in_picture.png)
+        addControllerIconButton(buttonsRow, "picture_in_picture", "▣", "Mini Player", this::toggleInAppMiniPlayer);
+
+        // 1b. Playback speed (using speed.png), placed between PiP and Rewind
+        speedButton = addControllerIconButton(buttonsRow, "speed", "⏱", "Playback speed", this::showSpeedDialog);
+
+        // 2. Rewind 10s
+        addControllerButton(buttonsRow, "◀◀", "Rewind 10s", this::rewind10s);
+
+        // 3. Play / Pause Button (highlighted)
+        btnPlayPause = addControllerButton(buttonsRow, "▶", "Play/Pause", this::togglePlayPause);
+        btnPlayPause.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 21);
+
+        // 4. Forward 10s
+        addControllerButton(buttonsRow, "▶▶", "Forward 10s", this::forward10s);
+
+        // 5. Settings (Gear) icon (using video_settings.png)
+        addControllerIconButton(buttonsRow, "video_settings", "⚙", "Settings", this::showPlayerSettings);
+
+        // 6. Fullscreen Toggle (using fullscreen_enter.png / fullscreen_exit.png)
+        fullscreenButton = addControllerIconButton(buttonsRow, "fullscreen_enter", "⤢", "Enter fullscreen", this::toggleFullscreen);
+
+        bottomPanel.addView(buttonsRow);
+
+        // ------------------------------------------
+        // ROW 2: TIMELINE / PROGRESS BAR ROW (HORIZONTAL)
+        // ------------------------------------------
+        LinearLayout timelineRow = new LinearLayout(this);
+        timelineRow.setOrientation(LinearLayout.HORIZONTAL);
+        timelineRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams timelineParams = new LinearLayout.LayoutParams(-1, -2);
+        timelineParams.topMargin = dp(4);
+        timelineRow.setLayoutParams(timelineParams);
+
+        timeCurrent = new TextView(this);
+        timeCurrent.setText("00:00");
+        timeCurrent.setTextColor(Color.WHITE);
+        timeCurrent.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        timeCurrent.setTypeface(null, android.graphics.Typeface.BOLD);
+        timelineRow.addView(timeCurrent, new LinearLayout.LayoutParams(-2, -2));
+
+        customSeekBar = new SeekBar(this);
+        customSeekBar.setMax(100);
+        customSeekBar.setProgress(0);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            customSeekBar.setProgressTintList(ColorStateList.valueOf(PRIMARY_COLOR));
+            customSeekBar.setThumbTintList(ColorStateList.valueOf(Color.WHITE));
+        }
+        LinearLayout.LayoutParams seekParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        seekParams.leftMargin = dp(8);
+        seekParams.rightMargin = dp(8);
+        timelineRow.addView(customSeekBar, seekParams);
+
+        timeDuration = new TextView(this);
+        timeDuration.setText("00:00");
+        timeDuration.setTextColor(Color.WHITE);
+        timeDuration.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        timeDuration.setTypeface(null, android.graphics.Typeface.BOLD);
+        timelineRow.addView(timeDuration, new LinearLayout.LayoutParams(-2, -2));
+
+        customSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser && player != null) {
+                    timeCurrent.setText(formatTime(progress));
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                isUserSeeking = true;
+                handler.removeCallbacks(autoHideRunnable);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                if (player != null) {
+                    player.seekTo(seekBar.getProgress());
+                }
+                isUserSeeking = false;
+                resetAutoHide();
+            }
+        });
+
+        bottomPanel.addView(timelineRow);
+    }
+
+    private TextView addControllerButton(
+            LinearLayout parent,
+            String symbol,
+            String description,
+            Runnable action
+    ) {
+        TextView button = new TextView(this);
+        button.setText(symbol);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
+        button.setGravity(Gravity.CENTER);
+        button.setContentDescription(description);
+        button.setFocusable(true);
+        button.setClickable(true);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(180, 35, 48, 67));
+        bg.setCornerRadius(dp(12));
+        button.setBackground(bg);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(40));
+        params.leftMargin = dp(5);
+        params.rightMargin = dp(5);
+        parent.addView(button, params);
+
+        button.setOnClickListener(v -> {
+            action.run();
+            resetAutoHide();
+        });
+        return button;
+    }
+
+    private ImageView addControllerIconButton(
+            LinearLayout parent,
+            String drawableName,
+            String fallbackSymbol,
+            String description,
+            Runnable action
+    ) {
+        ImageView button = new ImageView(this);
+        int resId = getResources().getIdentifier(drawableName, "drawable", getPackageName());
+        if (resId != 0) {
+            button.setImageResource(resId);
+        }
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setColorFilter(Color.WHITE);
+        button.setPadding(dp(11), dp(9), dp(11), dp(9));
+        button.setContentDescription(description);
+        button.setFocusable(true);
+        button.setClickable(true);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(180, 35, 48, 67));
+        bg.setCornerRadius(dp(12));
+        button.setBackground(bg);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(40));
+        params.leftMargin = dp(5);
+        params.rightMargin = dp(5);
+        parent.addView(button, params);
+
+        button.setOnClickListener(v -> {
+            action.run();
+            resetAutoHide();
+        });
+        return button;
+    }
+
+    // ==========================================
+    // GESTURE & HUD NOTIFICATION SYSTEM
+    // ==========================================
+
+    private void buildGestureHud() {
+        gestureHudCard = new FrameLayout(this);
+        gestureHudCard.setVisibility(View.GONE);
+
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setShape(GradientDrawable.RECTANGLE);
+        cardBg.setColor(Color.argb(220, 18, 22, 28));
+        cardBg.setCornerRadius(dp(16));
+        cardBg.setStroke(dp(1), Color.argb(60, 255, 255, 255));
+        gestureHudCard.setBackground(cardBg);
+        gestureHudCard.setPadding(dp(20), dp(14), dp(20), dp(14));
+
+        LinearLayout contentLayout = new LinearLayout(this);
+        contentLayout.setOrientation(LinearLayout.VERTICAL);
+        contentLayout.setGravity(Gravity.CENTER);
+
+        gestureHudIcon = new TextView(this);
+        gestureHudIcon.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 28);
+        gestureHudIcon.setTextColor(Color.WHITE);
+        gestureHudIcon.setGravity(Gravity.CENTER);
+        contentLayout.addView(gestureHudIcon, new LinearLayout.LayoutParams(-2, -2));
+
+        gestureHudText = new TextView(this);
+        gestureHudText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        gestureHudText.setTextColor(Color.WHITE);
+        gestureHudText.setTypeface(null, android.graphics.Typeface.BOLD);
+        gestureHudText.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(-2, -2);
+        textParams.topMargin = dp(4);
+        contentLayout.addView(gestureHudText, textParams);
+
+        gestureHudProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        gestureHudProgress.setMax(100);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(110), dp(6));
+        progressParams.topMargin = dp(8);
+        gestureHudProgress.setLayoutParams(progressParams);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            gestureHudProgress.setProgressTintList(ColorStateList.valueOf(Color.rgb(85, 194, 255)));
+            gestureHudProgress.setProgressBackgroundTintList(ColorStateList.valueOf(Color.argb(80, 255, 255, 255)));
+        }
+        contentLayout.addView(gestureHudProgress);
+
+        gestureHudCard.addView(contentLayout, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+    }
+
+    private void showGestureHud(String icon, String text, int progress) {
+        if (gestureHudCard == null || isInPipMode()) return;
+        gestureHudHandler.removeCallbacks(hideGestureHudRunnable);
+        gestureHudIcon.setText(icon);
+        gestureHudText.setText(text);
+        if (progress >= 0) {
+            gestureHudProgress.setVisibility(View.VISIBLE);
+            gestureHudProgress.setProgress(Math.max(0, Math.min(100, progress)));
+        } else {
+            gestureHudProgress.setVisibility(View.GONE);
+        }
+        gestureHudCard.setAlpha(1f);
+        gestureHudCard.setVisibility(View.VISIBLE);
+        gestureHudHandler.postDelayed(hideGestureHudRunnable, 1200);
+    }
+
+    private void fastForward15s() {
+        if (player == null) return;
+        long dur = player.getDuration();
+        long pos = player.getCurrentPosition() + 15000;
+        if (dur > 0 && pos > dur) pos = dur;
+        player.seekTo(pos);
+        updateSeekViews(pos);
+        showGestureHud("⏩", "+15s Forward", -1);
+    }
+
+    private void rewind15s() {
+        if (player == null) return;
+        long pos = Math.max(0, player.getCurrentPosition() - 15000);
+        player.seekTo(pos);
+        updateSeekViews(pos);
+        showGestureHud("⏪", "-15s Rewind", -1);
+    }
+
+    private void initGestureDetectors() {
+        gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDown(MotionEvent e) {
+                return true;
+            }
+
+            @Override
+            public boolean onSingleTapConfirmed(MotionEvent e) {
+                toggleControls();
+                return true;
+            }
+
+            @Override
+            public boolean onDoubleTap(MotionEvent e) {
+                if (customControlsOverlay == null || customControlsOverlay.getWidth() == 0) {
+                    return false;
+                }
+                float x = e.getX();
+                float halfWidth = customControlsOverlay.getWidth() / 2f;
+
+                if (x > halfWidth) {
+                    fastForward15s();
+                } else {
+                    rewind15s();
+                }
+                return true;
+            }
+        });
+
+        scaleGestureDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScaleBegin(ScaleGestureDetector detector) {
+                scaleDirection = 0;
+                return true;
+            }
+
+            @Override
+            public boolean onScale(ScaleGestureDetector detector) {
+                float spanX = detector.getCurrentSpanX();
+                float prevSpanX = detector.getPreviousSpanX();
+                float spanY = detector.getCurrentSpanY();
+                float prevSpanY = detector.getPreviousSpanY();
+
+                float diffX = Math.abs(spanX - prevSpanX);
+                float diffY = Math.abs(spanY - prevSpanY);
+
+                if (scaleDirection == 0) {
+                    if (diffX > diffY && diffX > dp(5)) {
+                        scaleDirection = 1; // Horizontal gesture
+                    } else if (diffY > diffX && diffY > dp(5)) {
+                        scaleDirection = 2; // Vertical gesture
+                    }
+                }
+
+                if (scaleDirection == 1) {
+                    // Horizontal Zoom In / Zoom Out (width change only)
+                    if (prevSpanX > 10f && spanX > 10f) {
+                        float factorX = spanX / prevSpanX;
+                        currentScaleX = Math.max(0.70f, Math.min(currentScaleX * factorX, 4.0f));
+                        if (playerView != null) {
+                            playerView.setScaleX(currentScaleX);
+                        }
+                        int percent = Math.round(currentScaleX * 100);
+                        showGestureHud("↔️", "Horizontal: " + percent + "%", -1);
+                    }
+                } else if (scaleDirection == 2) {
+                    // Vertical Zoom In / Zoom Out (height change only)
+                    if (prevSpanY > 10f && spanY > 10f) {
+                        float factorY = spanY / prevSpanY;
+                        currentScaleY = Math.max(0.70f, Math.min(currentScaleY * factorY, 4.0f));
+                        if (playerView != null) {
+                            playerView.setScaleY(currentScaleY);
+                        }
+                        int percent = Math.round(currentScaleY * 100);
+                        showGestureHud("↕️", "Vertical: " + percent + "%", -1);
+                    }
+                } else {
+                    // Slight diagonal motion or fallback
+                    float factor = detector.getScaleFactor();
+                    if (diffX >= diffY) {
+                        currentScaleX = Math.max(0.70f, Math.min(currentScaleX * factor, 4.0f));
+                        if (playerView != null) playerView.setScaleX(currentScaleX);
+                        showGestureHud("↔️", "Horizontal: " + Math.round(currentScaleX * 100) + "%", -1);
+                    } else {
+                        currentScaleY = Math.max(0.70f, Math.min(currentScaleY * factor, 4.0f));
+                        if (playerView != null) playerView.setScaleY(currentScaleY);
+                        showGestureHud("↕️", "Vertical: " + Math.round(currentScaleY * 100) + "%", -1);
+                    }
+                }
+                return true;
+            }
+
+            @Override
+            public void onScaleEnd(ScaleGestureDetector detector) {
+                scaleDirection = 0;
+                // Snap smoothly to 1.0 if close to original aspect ratio
+                if (Math.abs(currentScaleX - 1.0f) < 0.08f) {
+                    currentScaleX = 1.0f;
+                    if (playerView != null) playerView.setScaleX(1.0f);
+                }
+                if (Math.abs(currentScaleY - 1.0f) < 0.08f) {
+                    currentScaleY = 1.0f;
+                    if (playerView != null) playerView.setScaleY(1.0f);
+                }
+                if (currentScaleX == 1.0f && currentScaleY == 1.0f) {
+                    if (playerView != null) {
+                        playerView.setScaleX(1.0f);
+                        playerView.setScaleY(1.0f);
+                        playerView.setTranslationX(0);
+                        playerView.setTranslationY(0);
+                    }
+                    showGestureHud("🔍", "Fit to Screen (100%)", -1);
+                }
+            }
+        });
+    }
+
+    private void setupOverlayGestures() {
+        customControlsOverlay.setOnTouchListener((v, event) -> {
+            if (isInPipMode()) return false;
+
+            // Two-finger Pinch to Zoom
+            if (event.getPointerCount() >= 2) {
+                isSwipeGestureActive = false;
+                return scaleGestureDetector.onTouchEvent(event);
+            }
+
+            // Detect Single Tap and Double Tap (+15s / -15s)
+            boolean gestureHandled = gestureDetector.onTouchEvent(event);
+
+            // Single finger swipe for Volume (Right half) and Brightness (Left half)
+            int action = event.getActionMasked();
+            float x = event.getX();
+            float y = event.getY();
+            float viewHeight = v.getHeight() > 0 ? (float) v.getHeight() : dp(220);
+
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                    swipeStartX = x;
+                    swipeStartY = y;
+                    isSwipeGestureActive = false;
+                    isSwipeVolume = (x > v.getWidth() / 2f);
+
+                    if (isSwipeVolume) {
+                        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                        if (am != null) {
+                            initialVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+                        }
+                    } else {
+                        WindowManager.LayoutParams lp = getWindow().getAttributes();
+                        initialBrightness = lp.screenBrightness;
+                        if (initialBrightness < 0) {
+                            try {
+                                int sys = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS);
+                                initialBrightness = sys / 255.0f;
+                            } catch (Exception ignored) {
+                                initialBrightness = 0.5f;
+                            }
+                        }
+                    }
+                    break;
+
+                case MotionEvent.ACTION_MOVE:
+                    float deltaY = swipeStartY - y; // Upwards swipe increases value
+                    float deltaX = x - swipeStartX;
+
+                    if (!isSwipeGestureActive) {
+                        if (Math.abs(deltaY) > dp(14) && Math.abs(deltaY) > Math.abs(deltaX) * 1.2f) {
+                            isSwipeGestureActive = true;
+                        }
+                    }
+
+                    if (isSwipeGestureActive) {
+                        float deltaFraction = deltaY / viewHeight;
+
+                        if (isSwipeVolume) {
+                            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                            if (am != null) {
+                                int maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                                int targetVol = Math.max(0, Math.min(maxVol, initialVolume + Math.round(deltaFraction * maxVol)));
+                                am.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0);
+
+                                int percent = Math.round(((float) targetVol / (float) maxVol) * 100);
+                                String icon = (targetVol == 0) ? "🔇" : (percent < 50 ? "🔉" : "🔊");
+                                showGestureHud(icon, "Volume: " + percent + "%", percent);
+                            }
+                        } else {
+                            float targetBrightness = Math.max(0.01f, Math.min(1.0f, initialBrightness + deltaFraction));
+                            WindowManager.LayoutParams lp = getWindow().getAttributes();
+                            lp.screenBrightness = targetBrightness;
+                            getWindow().setAttributes(lp);
+
+                            int percent = Math.round(targetBrightness * 100);
+                            String icon = (percent < 35) ? "🔅" : "☀️";
+                            showGestureHud(icon, "Brightness: " + percent + "%", percent);
+                        }
+                        return true;
+                    }
+                    break;
+
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (isSwipeGestureActive) {
+                        isSwipeGestureActive = false;
+                        return true;
+                    }
+                    break;
+            }
+
+            return gestureHandled;
+        });
+    }
+
+    private void showControls() {
+        if (isInPipMode()) return;
+        bottomPanel.setVisibility(View.VISIBLE);
+        isControlsVisible = true;
+        resetAutoHide();
+    }
+
+    private void hideControls() {
+        if (isUserSeeking || isInPipMode()) return;
+        bottomPanel.setVisibility(View.GONE);
+        isControlsVisible = false;
+    }
+
+    private void toggleControls() {
+        if (isInPipMode()) return;
+        if (isControlsVisible) {
+            hideControls();
+        } else {
+            showControls();
+        }
+    }
+
+    private void resetAutoHide() {
+        handler.removeCallbacks(autoHideRunnable);
+        if (isControlsVisible && !isInPipMode()) {
+            handler.postDelayed(autoHideRunnable, 4000);
+        }
+    }
+
+    private void togglePlayPause() {
+        if (player == null) return;
+        if (player.isPlaying()) {
+            player.pause();
+            btnPlayPause.setText("▶");
+        } else {
+            player.play();
+            btnPlayPause.setText("❚❚");
+        }
+    }
+
+    private void rewind10s() {
+        if (player == null) return;
+        long pos = Math.max(0, player.getCurrentPosition() - 10000);
         player.seekTo(pos);
         updateSeekViews(pos);
     }
@@ -36,7 +1227,7 @@
         TextView button = new TextView(this);
         button.setText(text);
         button.setTextColor(Color.WHITE);
-        button.setTextSize(primary ? 15 : 12);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_DIP, primary ? 15 : 12);
         button.setGravity(Gravity.CENTER);
         button.setTypeface(null, android.graphics.Typeface.BOLD);
 
@@ -52,7 +1243,7 @@
         TextView view = new TextView(this);
         view.setText(text);
         view.setTextColor(Color.rgb(85, 194, 255));
-        view.setTextSize(12);
+        view.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
         view.setTypeface(null, android.graphics.Typeface.BOLD);
         view.setPadding(0, dp(4), 0, dp(6));
         return view;
@@ -918,7 +2109,7 @@
             TextView tabView = new TextView(this);
             tabView.setText(names[i]);
             tabView.setGravity(Gravity.CENTER);
-            tabView.setTextSize(15);
+            tabView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
             tabView.setPadding(0, dp(12), 0, dp(12));
             tabView.setTextColor(selected ? Color.WHITE : Color.argb(160, 255, 255, 255));
             tabView.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
@@ -943,7 +2134,7 @@
         TextView row = new TextView(this);
         row.setText((selected ? "\u25CF  " : "\u25CB  ") + label);
         row.setTextColor(selected ? Color.WHITE : Color.argb(200, 255, 255, 255));
-        row.setTextSize(15);
+        row.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
         row.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
         row.setPadding(dp(12), dp(12), dp(12), dp(12));
         row.setFocusable(true);
@@ -956,7 +2147,7 @@
         TextView row = new TextView(this);
         row.setText(text);
         row.setTextColor(Color.argb(160, 255, 255, 255));
-        row.setTextSize(14);
+        row.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         row.setPadding(dp(12), dp(12), dp(12), dp(12));
         listArea.addView(row, new LinearLayout.LayoutParams(-1, -2));
     }
@@ -1119,7 +2310,7 @@
         TextView header = new TextView(this);
         header.setText("RasVibe");
         header.setTextColor(Color.WHITE);
-        header.setTextSize(20);
+        header.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
         header.setTypeface(null, Typeface.BOLD);
         header.setPadding(0, 0, 0, dp(20));
         sideMenuPanel.addView(header, new LinearLayout.LayoutParams(-1, -2));
@@ -1160,12 +2351,12 @@
         TextView labelView = new TextView(this);
         labelView.setText(label);
         labelView.setTextColor(Color.WHITE);
-        labelView.setTextSize(15);
+        labelView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
         row.addView(labelView, new LinearLayout.LayoutParams(0, -2, 1f));
 
         TextView value = new TextView(this);
         value.setTextColor(Color.rgb(255, 210, 90));
-        value.setTextSize(14);
+        value.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         value.setTypeface(null, Typeface.BOLD);
         row.addView(value, new LinearLayout.LayoutParams(-2, -2));
 
@@ -1230,7 +2421,7 @@
         btnMiniExpand = new TextView(this);
         btnMiniExpand.setText("⛶");
         btnMiniExpand.setTextColor(Color.WHITE);
-        btnMiniExpand.setTextSize(14);
+        btnMiniExpand.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         btnMiniExpand.setGravity(Gravity.CENTER);
         GradientDrawable expBg = new GradientDrawable();
         expBg.setColor(Color.argb(180, 20, 28, 42));
@@ -1247,7 +2438,7 @@
         btnMiniClose = new TextView(this);
         btnMiniClose.setText("✕");
         btnMiniClose.setTextColor(Color.WHITE);
-        btnMiniClose.setTextSize(13);
+        btnMiniClose.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
         btnMiniClose.setGravity(Gravity.CENTER);
         GradientDrawable closeBg = new GradientDrawable();
         closeBg.setColor(Color.argb(210, 220, 38, 38));
@@ -1264,7 +2455,7 @@
         btnMiniPlayPause = new TextView(this);
         btnMiniPlayPause.setText("❚❚");
         btnMiniPlayPause.setTextColor(Color.WHITE);
-        btnMiniPlayPause.setTextSize(18);
+        btnMiniPlayPause.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
         btnMiniPlayPause.setGravity(Gravity.CENTER);
         GradientDrawable playBg = new GradientDrawable();
         playBg.setColor(Color.argb(190, 18, 24, 38));
@@ -1462,7 +2653,7 @@
         int miniH = dp(118);
         FrameLayout.LayoutParams miniParams = new FrameLayout.LayoutParams(miniW, miniH, Gravity.BOTTOM | Gravity.END);
         miniParams.rightMargin = dp(16);
-        miniParams.bottomMargin = dp(24);
+        miniParams.bottomMargin = dp(24) + navBottomInset;
         playerContainer.setLayoutParams(miniParams);
 
         mainAppContainer.addView(playerContainer, miniParams);
@@ -1933,7 +3124,7 @@
 
             TextView btn = new TextView(this);
             btn.setText(item.title);
-            btn.setTextSize(12);
+            btn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
             btn.setTypeface(null, android.graphics.Typeface.BOLD);
             btn.setGravity(Gravity.CENTER);
             btn.setPadding(dp(14), dp(8), dp(14), dp(8));
@@ -2390,7 +3581,7 @@
         TextView splashTitle = new TextView(this);
         splashTitle.setText("RasVibe");
         splashTitle.setTextColor(Color.WHITE);
-        splashTitle.setTextSize(26);
+        splashTitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 26);
         splashTitle.setTypeface(null, Typeface.BOLD);
         splashTitle.setGravity(Gravity.CENTER);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -2402,7 +3593,7 @@
         TextView splashSubtitle = new TextView(this);
         splashSubtitle.setText("Stream More. Watch Better.");
         splashSubtitle.setTextColor(Color.argb(200, 180, 195, 215));
-        splashSubtitle.setTextSize(14);
+        splashSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         splashSubtitle.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-2, -2);
         subtitleParams.topMargin = dp(8);
@@ -2433,7 +3624,7 @@
         TextView versionText = new TextView(this);
         versionText.setText("VERSION 1.0");
         versionText.setTextColor(Color.argb(230, 255, 255, 255));
-        versionText.setTextSize(12);
+        versionText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
         versionText.setTypeface(null, Typeface.BOLD);
         versionText.setGravity(Gravity.CENTER);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -2445,7 +3636,7 @@
         TextView thanksText = new TextView(this);
         thanksText.setText("Thank you for choosing RasVibe");
         thanksText.setTextColor(Color.argb(160, 160, 175, 195));
-        thanksText.setTextSize(12);
+        thanksText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
         thanksText.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams thanksParams = new LinearLayout.LayoutParams(-2, -2);
         thanksParams.topMargin = dp(6);
