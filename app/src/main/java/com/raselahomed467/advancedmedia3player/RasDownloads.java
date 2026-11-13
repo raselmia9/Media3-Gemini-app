@@ -519,6 +519,58 @@ public final class RasDownloads {
         return -1;
     }
 
+    public static String statusLineOf(Download d) {
+        long downloaded = d.getBytesDownloaded();
+        long total = d.contentLength;
+        int p = percentOf(d);
+
+        if (d.state == Download.STATE_COMPLETED) {
+            long finalBytes = downloaded > 0 ? downloaded : total;
+            if (finalBytes > 0) {
+                return "100% • " + megabytes(finalBytes) + " • ডাউনলোড সম্পন্ন";
+            }
+            return "100% • ডাউনলোড সম্পন্ন";
+        }
+
+        if (d.state == Download.STATE_FAILED) {
+            return "ডাউনলোড ব্যর্থ হয়েছে • আবার চেষ্টা করুন";
+        }
+
+        if (d.state == Download.STATE_REMOVING) {
+            return "মুছে ফেলা হচ্ছে...";
+        }
+
+        if (d.state == Download.STATE_QUEUED && downloaded <= 0) {
+            return "অপেক্ষায় আছে...";
+        }
+
+        String downStr = megabytes(downloaded);
+        String pctStr = (p >= 0) ? (p + "%") : "";
+
+        StringBuilder sb = new StringBuilder();
+        if (d.state == Download.STATE_STOPPED) {
+            sb.append("থামানো আছে");
+        }
+
+        if (!pctStr.isEmpty()) {
+            if (sb.length() > 0) sb.append(" • ");
+            sb.append(pctStr);
+        }
+
+        if (total > 0) {
+            if (sb.length() > 0) sb.append(" • ");
+            sb.append(downStr).append(" / ").append(megabytes(total));
+        } else if (downloaded > 0) {
+            if (sb.length() > 0) sb.append(" • ");
+            sb.append(downStr);
+        } else {
+            if (sb.length() > 0) sb.append(" • ");
+            sb.append("ডাউনলোড হচ্ছে...");
+        }
+
+        return sb.toString();
+    }
+
     public static String stateLabel(Download d) {
         String size = megabytes(d.getBytesDownloaded());
         switch (d.state) {
