@@ -3,6 +3,7 @@ package com.raselahomed467.advancedmedia3player;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.graphics.Bitmap;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -103,6 +104,13 @@ public class RasDownloadService extends DownloadService {
                 .setOnlyAlertOnce(true)
                 .setCategory(NotificationCompat.CATEGORY_PROGRESS)
                 .setPriority(NotificationCompat.PRIORITY_LOW);
+
+        if (single != null) {
+            Bitmap thumb = RasDownloads.loadThumbnail(this, single);
+            if (thumb != null) {
+                builder.setLargeIcon(thumb);
+            }
+        }
 
         if (active == 0) {
             builder.setContentTitle("ডাউনলোড সম্পন্ন")

@@ -12,6 +12,8 @@ import android.media.MediaDataSource;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -363,7 +365,7 @@ public final class RasDownloads {
 
     public static File getLocalVideoFile(Context context, Download d) {
         String path = getLocalPath(context, d);
-        if (path != null && !path.isEmpty()) {
+        if (path != null && !path.isEmpty() && !path.startsWith("Media3 Cache")) {
             File f = new File(path);
             if (f.exists() && f.length() > 0) return f;
         }
@@ -393,38 +395,41 @@ public final class RasDownloads {
         }
 
         String key = keyOf(d);
-        synchronized (RasDownloads.class) {
+        synchronized (assembleJobs) {
             if (!assembleJobs.add(key)) return;
         }
 
         new Thread(() -> {
             try {
+                try { Thread.sleep(400); } catch (InterruptedException ignored) {}
                 if (offlineReadFactory != null) {
                     DataSource ds = offlineReadFactory.createDataSource();
                     long bytes = ds.open(new DataSpec(d.request.uri));
                     if (bytes != 0) {
-                        try (FileOutputStream fos = new FileOutputStream(outFile)) {
-                            byte[] buffer = new byte[128 * 1024];
+                        File tmp = new File(getOfflineFolder(app), key + ".tmp");
+                        try (FileOutputStream fos = new FileOutputStream(tmp)) {
+                            byte[] buffer = new byte[256 * 1024];
                             int read;
                             while ((read = ds.read(buffer, 0, buffer.length)) != androidx.media3.common.C.RESULT_END_OF_INPUT) {
                                 fos.write(buffer, 0, read);
                             }
                             fos.flush();
                         }
-                        if (outFile.exists() && outFile.length() > 0) {
+                        if (tmp.exists() && tmp.length() > 0) {
+                            if (outFile.exists()) outFile.delete();
+                            tmp.renameTo(outFile);
                             saveLocalPath(app, d.request.id, outFile.getAbsolutePath());
                         }
                     }
                     try { ds.close(); } catch (Exception ignored) {}
                 }
-            } catch (Exception e) {
-                if (outFile.exists()) outFile.delete();
+            } catch (Exception ignored) {
             } finally {
-                synchronized (RasDownloads.class) {
+                synchronized (assembleJobs) {
                     assembleJobs.remove(key);
                 }
                 if (onDone != null) {
-                    onDone.run();
+                    new Handler(Looper.getMainLooper()).post(onDone);
                 }
             }
         }, "ras-assemble-video").start();
@@ -439,6 +444,7 @@ public final class RasDownloads {
 
     public static void showCompletedNotification(Context context, Download d) {
         try {
+            ensureNotificationChannel(context);
             String title = titleOf(context, d);
             Intent intent = new Intent(context, MainActivity.class)
                     .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -453,6 +459,15 @@ public final class RasDownloads {
                     .setAutoCancel(true)
                     .setContentIntent(pi)
                     .setPriority(NotificationCompat.PRIORITY_HIGH);
+
+            Bitmap thumb = loadThumbnail(context, d);
+            if (thumb != null) {
+                builder.setLargeIcon(thumb);
+                builder.setStyle(new NotificationCompat.BigPictureStyle()
+                        .bigPicture(thumb)
+                        .setSummaryText("ডাউনলোড সম্পন্ন: " + title)
+                        .bigLargeIcon((Bitmap) null));
+            }
 
             NotificationManager nm = (NotificationManager)
                     context.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -489,35 +504,44 @@ public final class RasDownloads {
 
     public static int percentOf(Download d) {
         float p = d.getPercentDownloaded();
-        return p >= 0 ? Math.round(p) : -1;
+        if (p >= 0 && p <= 100) {
+            return Math.round(p);
+        }
+        if (d.contentLength > 0 && d.getBytesDownloaded() > 0) {
+            int calc = Math.round((d.getBytesDownloaded() * 100f) / d.contentLength);
+            return Math.min(100, Math.max(0, calc));
+        }
+        return -1;
     }
 
     public static String stateLabel(Download d) {
         String size = megabytes(d.getBytesDownloaded());
         switch (d.state) {
             case Download.STATE_QUEUED:
-                return "অপেক্ষায় আছে";
+                return "অপেক্ষায় আছে...";
             case Download.STATE_DOWNLOADING: {
                 int p = percentOf(d);
-                return p >= 0
-                        ? "ডাউনলোড হচ্ছে • " + p + "% • " + size
-                        : "ডাউনলোড হচ্ছে • " + size;
+                if (p >= 0) {
+                    if (d.contentLength > 0) {
+                        return "ডাউনলোড হচ্ছে • " + p + "% (" + size + " / " + megabytes(d.contentLength) + ")";
+                    }
+                    return "ডাউনলোড হচ্ছে • " + p + "% • " + size;
+                }
+                return "ডাউনলোড হচ্ছে • " + size;
             }
             case Download.STATE_STOPPED: {
                 if (d.stopReason == 0) return "অপেক্ষায় আছে";
                 int p = percentOf(d);
-                String text = "থামানো আছে";
-                if (p >= 0) text += " • " + p + "%";
-                return text + " • " + size;
+                return "থামানো আছে" + (p >= 0 ? " • " + p + "%" : "") + " • " + size;
             }
             case Download.STATE_COMPLETED:
-                return "সম্পূর্ণ হয়েছে • " + size;
+                return "ডাউনলোড সম্পন্ন • " + size;
             case Download.STATE_FAILED:
-                return "ব্যর্থ হয়েছে, আবার চেষ্টা করুন";
+                return "ডাউনলোড ব্যর্থ হয়েছে, আবার চেষ্টা করুন";
             case Download.STATE_REMOVING:
-                return "মুছে ফেলা হচ্ছে";
+                return "মুছে ফেলা হচ্ছে...";
             case Download.STATE_RESTARTING:
-                return "আবার শুরু হচ্ছে";
+                return "আবার শুরু হচ্ছে...";
             default:
                 return "";
         }
@@ -714,7 +738,7 @@ public final class RasDownloads {
     public static void generateThumbnailIfNeeded(Context context, Download d, @Nullable Runnable onDone) {
         if (d.state != Download.STATE_COMPLETED) return;
         Context app = context.getApplicationContext();
-        if (thumbFile(app, d).exists() || failFile(app, d).exists()) {
+        if (thumbFile(app, d).exists()) {
             if (onDone != null) onDone.run();
             return;
         }
@@ -722,110 +746,13 @@ public final class RasDownloads {
         String savedThumbUrl = getSavedThumbUrl(app, d.request.id);
         if (savedThumbUrl != null && !savedThumbUrl.trim().isEmpty()) {
             fetchThumbnailFromUrl(app, d.request.id, savedThumbUrl.trim());
-            if (thumbFile(app, d).exists()) {
-                if (onDone != null) onDone.run();
-                return;
-            }
         }
-
-        String key = keyOf(d);
-        synchronized (RasDownloads.class) {
-            if (!thumbJobs.add(key)) return;
-        }
-
-        new Thread(() -> {
-            boolean ok = false;
-            MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-            try {
-                String lower = d.request.id.toLowerCase(Locale.ROOT);
-                if (lower.contains(".m3u8") || lower.contains(".mpd")) {
-                    throw new IOException("segmented stream");
-                }
-                retriever.setDataSource(new CacheMediaSource(Uri.parse(d.request.id), offlineReadFactory));
-
-                String durText = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-                long durationMs = durText == null ? 0 : Long.parseLong(durText);
-                long atMs = durationMs > 0 ? Math.min(durationMs / 10, 30_000) : 2_000;
-
-                Bitmap frame = retriever.getFrameAtTime(
-                        atMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
-                if (frame == null) frame = retriever.getFrameAtTime(0);
-                if (frame != null) {
-                    Bitmap small = scaleTo(frame, 480);
-                    try (FileOutputStream out = new FileOutputStream(thumbFile(app, d))) {
-                        small.compress(Bitmap.CompressFormat.JPEG, 85, out);
-                    }
-                    ok = true;
-                }
-            } catch (Exception ignored) {
-            } finally {
-                try { retriever.release(); } catch (Exception ignored) {}
-            }
-
-            if (!ok) {
-                try { failFile(app, d).createNewFile(); } catch (IOException ignored) {}
-            }
-            synchronized (RasDownloads.class) {
-                thumbJobs.remove(key);
-            }
-            if (onDone != null) onDone.run();
-        }, "ras-thumb").start();
+        if (onDone != null) onDone.run();
     }
 
     private static Bitmap scaleTo(Bitmap src, int width) {
         if (src.getWidth() <= width) return src;
         int height = Math.round(src.getHeight() * (width / (float) src.getWidth()));
         return Bitmap.createScaledBitmap(src, width, height, true);
-    }
-
-    private static final class CacheMediaSource extends MediaDataSource {
-        private final Uri uri;
-        private final CacheDataSource.Factory factory;
-        private DataSource source;
-        private long position = -1;
-        private long length = -2;
-
-        CacheMediaSource(Uri uri, CacheDataSource.Factory factory) {
-            this.uri = uri;
-            this.factory = factory;
-        }
-
-        @Override
-        public synchronized long getSize() throws IOException {
-            if (length == -2) {
-                closeSource();
-                source = factory.createDataSource();
-                length = source.open(new DataSpec(uri));
-                position = 0;
-            }
-            return length;
-        }
-
-        @Override
-        public synchronized int readAt(long pos, byte[] buffer, int offset, int size) throws IOException {
-            if (length >= 0 && pos >= length) return -1;
-            if (source == null || pos != position) {
-                closeSource();
-                source = factory.createDataSource();
-                source.open(new DataSpec(uri, pos, androidx.media3.common.C.LENGTH_UNSET));
-                position = pos;
-            }
-            int read = source.read(buffer, offset, size);
-            if (read == androidx.media3.common.C.RESULT_END_OF_INPUT) return -1;
-            position += read;
-            return read;
-        }
-
-        @Override
-        public synchronized void close() {
-            closeSource();
-        }
-
-        private void closeSource() {
-            if (source != null) {
-                try { source.close(); } catch (IOException ignored) {}
-                source = null;
-            }
-        }
     }
 }

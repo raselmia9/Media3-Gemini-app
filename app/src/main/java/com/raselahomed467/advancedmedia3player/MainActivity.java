@@ -3740,11 +3740,21 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
+    private long lastDownloadRefreshTime = 0;
+    private final Handler downloadRefreshHandler = new Handler(Looper.getMainLooper());
+    private final Runnable downloadRefreshRunnable = this::refreshDownloadPage;
+
     private void refreshDownloadPageLater() {
         runOnUiThread(() -> {
-            if (downloadPageOverlay != null && downloadPageOverlay.getVisibility() == View.VISIBLE) {
-                refreshDownloadPage();
+            if (downloadPageOverlay == null || downloadPageOverlay.getVisibility() != View.VISIBLE) return;
+            long now = android.os.SystemClock.uptimeMillis();
+            if (now - lastDownloadRefreshTime < 600) {
+                downloadRefreshHandler.removeCallbacks(downloadRefreshRunnable);
+                downloadRefreshHandler.postDelayed(downloadRefreshRunnable, 600 - (now - lastDownloadRefreshTime));
+                return;
             }
+            lastDownloadRefreshTime = now;
+            refreshDownloadPage();
         });
     }
 
@@ -3808,8 +3818,9 @@ public class MainActivity extends ComponentActivity {
         }
         if (d.state == Download.STATE_COMPLETED) {
             thumbBox.setOnClickListener(v -> playOfflineDownload(d));
-            RasDownloads.generateThumbnailIfNeeded(this, d, this::refreshDownloadPageLater);
-            RasDownloads.assembleOfflineVideoIfNeeded(this, d, this::refreshDownloadPageLater);
+            card.setOnClickListener(v -> playOfflineDownload(d));
+            RasDownloads.generateThumbnailIfNeeded(this, d, null);
+            RasDownloads.assembleOfflineVideoIfNeeded(this, d, null);
         }
         card.addView(thumbBox, new LinearLayout.LayoutParams(-1, dp(160)));
 
@@ -3903,28 +3914,40 @@ public class MainActivity extends ComponentActivity {
         }
 
         try {
+            isOfflinePlayback = true;
+            canDownloadNow = false;
+            applyDownloadButtonVisibility();
+
+            File localFile = RasDownloads.getLocalVideoFile(this, d);
+            if (localFile != null && localFile.exists() && localFile.length() > 0) {
+                Uri fileUri = Uri.fromFile(localFile);
+                MediaItem item = MediaItem.fromUri(fileUri);
+                player.setMediaItem(item);
+                player.prepare();
+                player.play();
+
+                btnPlayPause.setText("❚❚");
+                resetAutoHide();
+                setStatus("Playing: " + RasDownloads.titleOf(this, d));
+                return;
+            }
+
             Uri uri = d.request.uri;
             MediaItem item = new MediaItem.Builder()
                     .setUri(uri)
                     .setMimeType(d.request.mimeType)
                     .build();
 
-            DefaultMediaSourceFactory offlineSourceFactory = new DefaultMediaSourceFactory(this)
-                    .setDataSourceFactory(RasDownloads.getOfflineReadFactory());
+            DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this)
+                    .setDataSourceFactory(RasDownloads.getPlaybackCacheFactory(this));
 
-            currentConfig = new StreamConfig();
-            currentConfig.url = uri.toString();
-            isOfflinePlayback = true;
-            canDownloadNow = false;
-            applyDownloadButtonVisibility();
-
-            player.setMediaSource(offlineSourceFactory.createMediaSource(item));
+            player.setMediaSource(sourceFactory.createMediaSource(item));
             player.prepare();
             player.play();
 
             btnPlayPause.setText("❚❚");
             resetAutoHide();
-            setStatus("Playing downloaded video");
+            setStatus("Playing: " + RasDownloads.titleOf(this, d));
         } catch (Exception e) {
             toast("Offline play error: " + e.getMessage());
         }
