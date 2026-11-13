@@ -5,7 +5,6 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 
 import androidx.annotation.Nullable;
-import androidx.media3.common.util.Util;
 import androidx.media3.database.DatabaseProvider;
 import androidx.media3.database.StandaloneDatabaseProvider;
 import androidx.media3.datasource.DataSource;
@@ -29,6 +28,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -41,12 +41,14 @@ import okhttp3.OkHttpClient;
 
 /**
  * Shared download store for RasVibe.
- * One DownloadManager, one cache and one database for the whole process, so the
- * activity and the download service always see the same downloads.
+ * One DownloadManager, one cache and one database for the whole process.
+ * Downloads are stored in the app's private internal storage, so they do not
+ * appear in the file manager, the gallery or the media scanner.
  */
 public final class RasDownloads {
 
-    private static final String HEADER_PREFS = "ras_download_headers";
+    private static final String PREFS = "ras_download_headers";
+    private static final String KEY_PRIVATE_STORAGE = "private_storage_v2";
     private static final int USER_STOP_REASON = 1;
 
     private static DownloadManager manager;
@@ -59,12 +61,27 @@ public final class RasDownloads {
         if (manager != null) return;
 
         Context app = context.getApplicationContext();
+        SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        boolean firstPrivateRun = !prefs.getBoolean(KEY_PRIVATE_STORAGE, false);
+        if (firstPrivateRun) {
+            // Downloads from the older build lived in a folder the file manager could see.
+            // They cannot be played from the new private folder, so that old folder is removed once.
+            File oldDir = app.getExternalFilesDir(null) == null
+                    ? null
+                    : new File(app.getExternalFilesDir(null), "downloads");
+            deleteRecursively(oldDir);
+        }
+
         DatabaseProvider databaseProvider = new StandaloneDatabaseProvider(app);
 
-        File base = app.getExternalFilesDir(null);
-        if (base == null) base = app.getFilesDir();
-        File cacheDir = new File(base, "downloads");
-        cache = new SimpleCache(cacheDir, new NoOpCacheEvictor(), databaseProvider);
+        File base = new File(app.getFilesDir(), "offline_media");
+        if (!base.exists()) base.mkdirs();
+        try {
+            File nomedia = new File(base, ".nomedia");
+            if (!nomedia.exists()) nomedia.createNewFile();
+        } catch (IOException ignored) {}
+
+        cache = new SimpleCache(base, new NoOpCacheEvictor(), databaseProvider);
 
         // Download network calls: our headers are added per host, then OkHttp does the request.
         OkHttpDataSource.Factory okFactory = new OkHttpDataSource.Factory(new OkHttpClient.Builder().build());
@@ -77,10 +94,25 @@ public final class RasDownloads {
 
         manager = new DownloadManager(app, new DefaultDownloadIndex(databaseProvider), downloaderFactory);
 
+        if (firstPrivateRun) {
+            // Remove the index entries that pointed to the old folder.
+            manager.removeAllDownloads();
+            prefs.edit().putBoolean(KEY_PRIVATE_STORAGE, true).apply();
+        }
+
         // Offline playback: read only from the cache, never from the network.
         offlineReadFactory = new CacheDataSource.Factory()
                 .setCache(cache)
                 .setUpstreamDataSourceFactory(null);
+    }
+
+    private static void deleteRecursively(@Nullable File file) {
+        if (file == null || !file.exists()) return;
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) deleteRecursively(child);
+        }
+        file.delete();
     }
 
     public static DownloadManager getManager() {
@@ -89,6 +121,20 @@ public final class RasDownloads {
 
     public static CacheDataSource.Factory getOfflineReadFactory() {
         return offlineReadFactory;
+    }
+
+    /** True once the saved download list has been loaded from the database. */
+    public static boolean isReady() {
+        return manager != null && manager.isInitialized();
+    }
+
+    /** All downloads, newest activity first. Empty until the list is loaded. */
+    public static List<Download> listForPage() {
+        List<Download> out = new ArrayList<>();
+        if (!isReady()) return out;
+        out.addAll(manager.getCurrentDownloads());
+        Collections.sort(out, (a, b) -> Long.compare(b.updateTimeMs, a.updateTimeMs));
+        return out;
     }
 
     // ------------------------------------------------------------------
@@ -113,7 +159,7 @@ public final class RasDownloads {
     // Returns the MIME type for HLS / DASH streams, or null for progressive files
     // (Media3 infers the type from the URL when this is null).
     private static String guessMimeType(String url) {
-        String lower = url.toLowerCase(java.util.Locale.ROOT);
+        String lower = url.toLowerCase(Locale.ROOT);
         int q = lower.indexOf('?');
         if (q >= 0) lower = lower.substring(0, q);
         if (lower.endsWith(".m3u8")) return "application/x-mpegURL";
@@ -147,6 +193,7 @@ public final class RasDownloads {
     /** Resumes whatever is still unfinished when the app starts again. */
     public static boolean hasUnfinished(Context context) {
         init(context);
+        if (!isReady()) return false;
         for (Download d : manager.getCurrentDownloads()) {
             if (d.state != Download.STATE_COMPLETED) return true;
         }
@@ -155,6 +202,7 @@ public final class RasDownloads {
 
     public static boolean isAlreadyAdded(Context context, String url) {
         init(context);
+        if (!isReady()) return false;
         for (Download d : manager.getCurrentDownloads()) {
             if (url.equals(d.request.id)) return true;
         }
@@ -162,7 +210,7 @@ public final class RasDownloads {
     }
 
     // ------------------------------------------------------------------
-    // Labels
+    // Labels and progress
     // ------------------------------------------------------------------
 
     public static String titleOf(Download download) {
@@ -180,16 +228,32 @@ public final class RasDownloads {
         return "Video";
     }
 
+    /** Percent downloaded (0-100), or -1 while the total size is still unknown. */
+    public static int percentOf(Download d) {
+        float p = d.getPercentDownloaded();
+        return p >= 0 ? Math.round(p) : -1;
+    }
+
     public static String stateLabel(Download d) {
+        String size = megabytes(d.getBytesDownloaded());
         switch (d.state) {
             case Download.STATE_QUEUED:
                 return "অপেক্ষায় আছে";
-            case Download.STATE_DOWNLOADING:
-                return "ডাউনলোড হচ্ছে " + percentText(d);
-            case Download.STATE_STOPPED:
-                return d.stopReason == 0 ? "অপেক্ষায় আছে" : "থামানো আছে " + percentText(d);
+            case Download.STATE_DOWNLOADING: {
+                int p = percentOf(d);
+                return p >= 0
+                        ? "ডাউনলোড হচ্ছে • " + p + "% • " + size
+                        : "ডাউনলোড হচ্ছে • " + size;
+            }
+            case Download.STATE_STOPPED: {
+                if (d.stopReason == 0) return "অপেক্ষায় আছে";
+                int p = percentOf(d);
+                String text = "থামানো আছে";
+                if (p >= 0) text += " • " + p + "%";
+                return text + " • " + size;
+            }
             case Download.STATE_COMPLETED:
-                return "সম্পূর্ণ হয়েছে • " + megabytes(d.getBytesDownloaded());
+                return "সম্পূর্ণ হয়েছে • " + size;
             case Download.STATE_FAILED:
                 return "ব্যর্থ হয়েছে, আবার চেষ্টা করুন";
             case Download.STATE_REMOVING:
@@ -199,11 +263,6 @@ public final class RasDownloads {
             default:
                 return "";
         }
-    }
-
-    private static String percentText(Download d) {
-        float p = d.getPercentDownloaded();
-        return p >= 0 ? String.format(Locale.US, "%.0f%%", p) : "";
     }
 
     private static String megabytes(long bytes) {
@@ -223,7 +282,7 @@ public final class RasDownloads {
                 json.put(e.getKey(), e.getValue());
             }
             context.getApplicationContext()
-                    .getSharedPreferences(HEADER_PREFS, Context.MODE_PRIVATE)
+                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putString(host, json.toString())
                     .apply();
@@ -234,7 +293,7 @@ public final class RasDownloads {
         Map<String, String> out = new HashMap<>();
         if (host == null) return out;
         try {
-            SharedPreferences prefs = context.getSharedPreferences(HEADER_PREFS, Context.MODE_PRIVATE);
+            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             String raw = prefs.getString(host, null);
             if (raw == null) return out;
             JSONObject json = new JSONObject(raw);
