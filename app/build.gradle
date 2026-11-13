@@ -48,4 +48,7 @@ dependencies {
 
     // FFmpeg Audio Decoder
     implementation "androidx.media3:media3-decoder-ffmpeg:$media3_version"
+
+    implementation "androidx.media3:media3-database:$media3_version"
+    
 }
