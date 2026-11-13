@@ -100,7 +100,7 @@ public final class RasDownloads {
         saveHeaders(context, url, headers);
 
         Uri uri = Uri.parse(url);
-        String mimeType = Util.inferContentTypeForUriAndMimeType(uri, null);
+        String mimeType = guessMimeType(url);
 
         DownloadRequest request = new DownloadRequest.Builder(url, uri)
                 .setMimeType(mimeType)
@@ -108,6 +108,17 @@ public final class RasDownloads {
                 .build();
 
         DownloadService.sendAddDownload(context, RasDownloadService.class, request, 0, true);
+    }
+
+    // Returns the MIME type for HLS / DASH streams, or null for progressive files
+    // (Media3 infers the type from the URL when this is null).
+    private static String guessMimeType(String url) {
+        String lower = url.toLowerCase(java.util.Locale.ROOT);
+        int q = lower.indexOf('?');
+        if (q >= 0) lower = lower.substring(0, q);
+        if (lower.endsWith(".m3u8")) return "application/x-mpegURL";
+        if (lower.endsWith(".mpd")) return "application/dash+xml";
+        return null;
     }
 
     public static void pause(Context context, Download download) {
