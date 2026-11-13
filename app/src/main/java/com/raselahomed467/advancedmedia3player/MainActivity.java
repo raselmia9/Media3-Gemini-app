@@ -129,6 +129,17 @@ public class MainActivity extends ComponentActivity {
     private StreamConfig currentConfig;
     private boolean isOfflinePlayback = false;
     private boolean canDownloadNow = false;
+    // Refreshes the Downloads page once a second while it is open, so progress keeps moving
+    private final Handler downloadTicker = new Handler(Looper.getMainLooper());
+    private final Runnable downloadTickRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (downloadPageOverlay != null && downloadPageOverlay.getVisibility() == View.VISIBLE) {
+                refreshDownloadPage();
+                downloadTicker.postDelayed(this, 1000L);
+            }
+        }
+    };
     private final DownloadManager.Listener downloadListener = new DownloadManager.Listener() {
         @Override
         public void onInitialized(DownloadManager downloadManager) {
@@ -3679,9 +3690,12 @@ public class MainActivity extends ComponentActivity {
         if (downloadPageOverlay == null) return;
         refreshDownloadPage();
         downloadPageOverlay.setVisibility(View.VISIBLE);
+        downloadTicker.removeCallbacks(downloadTickRunnable);
+        downloadTicker.post(downloadTickRunnable);
     }
 
     private void hideDownloadPage() {
+        downloadTicker.removeCallbacks(downloadTickRunnable);
         if (downloadPageOverlay != null) {
             downloadPageOverlay.setVisibility(View.GONE);
         }
@@ -3699,10 +3713,17 @@ public class MainActivity extends ComponentActivity {
         if (downloadListContainer == null) return;
         downloadListContainer.removeAllViews();
 
-        DownloadManager manager = RasDownloads.getManager();
-        List<Download> items = manager == null
-                ? new ArrayList<>()
-                : new ArrayList<>(manager.getCurrentDownloads());
+        if (!RasDownloads.isReady()) {
+            TextView loading = new TextView(this);
+            loading.setText("ডাউনলোডের তালিকা লোড হচ্ছে...");
+            loading.setTextColor(Color.rgb(170, 185, 205));
+            loading.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+            loading.setPadding(dp(4), dp(20), dp(4), dp(20));
+            downloadListContainer.addView(loading, new LinearLayout.LayoutParams(-1, -2));
+            return;
+        }
+
+        List<Download> items = RasDownloads.listForPage();
 
         if (items.isEmpty()) {
             TextView empty = new TextView(this);
@@ -4086,6 +4107,7 @@ public class MainActivity extends ComponentActivity {
         super.onDestroy();
 
         handler.removeCallbacksAndMessages(null);
+        downloadTicker.removeCallbacksAndMessages(null);
         if (RasDownloads.getManager() != null) {
             RasDownloads.getManager().removeListener(downloadListener);
         }
