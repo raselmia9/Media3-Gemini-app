@@ -3743,13 +3743,39 @@ public class MainActivity extends ComponentActivity {
     }
 
     private View buildDownloadRow(Download d) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.argb(180, 35, 48, 67));
-        bg.setCornerRadius(dp(12));
-        row.setBackground(bg);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(Color.argb(180, 35, 48, 67));
+        cardBg.setCornerRadius(dp(14));
+        card.setBackground(cardBg);
+        card.setClipToOutline(true);
+
+        FrameLayout thumbBox = new FrameLayout(this);
+        thumbBox.setBackgroundColor(Color.rgb(20, 28, 42));
+        android.graphics.Bitmap thumb = RasDownloads.loadThumbnail(this, d);
+        if (thumb != null) {
+            ImageView thumbView = new ImageView(this);
+            thumbView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            thumbView.setImageBitmap(thumb);
+            thumbBox.addView(thumbView, new FrameLayout.LayoutParams(-1, -1));
+        } else {
+            TextView placeholder = new TextView(this);
+            placeholder.setText(d.state == Download.STATE_COMPLETED ? "▶" : "⬇");
+            placeholder.setTextColor(Color.rgb(120, 140, 165));
+            placeholder.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 34);
+            placeholder.setGravity(Gravity.CENTER);
+            thumbBox.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
+        }
+        if (d.state == Download.STATE_COMPLETED) {
+            thumbBox.setOnClickListener(v -> playOfflineDownload(d));
+            RasDownloads.generateThumbnailIfNeeded(this, d, this::refreshDownloadPageLater);
+        }
+        card.addView(thumbBox, new LinearLayout.LayoutParams(-1, dp(160)));
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(14), dp(10), dp(14), dp(12));
 
         TextView name = new TextView(this);
         name.setText(RasDownloads.titleOf(d));
@@ -3758,14 +3784,14 @@ public class MainActivity extends ComponentActivity {
         name.setTypeface(null, Typeface.BOLD);
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        row.addView(name);
+        body.addView(name);
 
         TextView info = new TextView(this);
         info.setText(RasDownloads.stateLabel(d));
         info.setTextColor(Color.rgb(170, 185, 205));
         info.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
         info.setPadding(0, dp(4), 0, 0);
-        row.addView(info);
+        body.addView(info);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -3780,10 +3806,14 @@ public class MainActivity extends ComponentActivity {
         } else if (d.state == Download.STATE_FAILED) {
             actions.addView(makeDownloadActionButton("Retry", true, () -> RasDownloads.retry(this, d)));
         }
-        actions.addView(makeDownloadActionButton("Delete", false, () -> RasDownloads.remove(this, d)));
+        actions.addView(makeDownloadActionButton("Delete", false, () -> {
+            RasDownloads.remove(this, d);
+            RasDownloads.deleteThumbnail(this, d);
+        }));
 
-        row.addView(actions);
-        return row;
+        body.addView(actions);
+        card.addView(body);
+        return card;
     }
 
     private TextView makeDownloadActionButton(String text, boolean primary, Runnable action) {
