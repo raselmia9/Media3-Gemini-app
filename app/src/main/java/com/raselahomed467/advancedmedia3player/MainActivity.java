@@ -3925,12 +3925,7 @@ public class MainActivity extends ComponentActivity {
             playLp.rightMargin = dp(8);
             bottomRow.addView(playBtn, playLp);
 
-            View delBtn = makeDownloadRowButton("🗑 মুছে ফেলুন", Color.rgb(248, 113, 113), false, true, () -> {
-                RasDownloads.remove(this, d);
-                RasDownloads.deleteThumbnail(this, d);
-                RasDownloads.deleteLocalVideo(this, d);
-                refreshDownloadPage();
-            });
+            View delBtn = makeDownloadRowButton("🗑 মুছে ফেলুন", Color.rgb(248, 113, 113), true, true, () -> confirmDeleteDownload(d));
             bottomRow.addView(delBtn, new LinearLayout.LayoutParams(0, dp(34), 1.0f));
 
             card.setOnClickListener(v -> playOfflineDownload(d));
@@ -3943,12 +3938,7 @@ public class MainActivity extends ComponentActivity {
             retryLp.rightMargin = dp(8);
             bottomRow.addView(retryBtn, retryLp);
 
-            View delBtn = makeDownloadRowButton("✕ বাতিল", Color.rgb(248, 113, 113), false, true, () -> {
-                RasDownloads.remove(this, d);
-                RasDownloads.deleteThumbnail(this, d);
-                RasDownloads.deleteLocalVideo(this, d);
-                refreshDownloadPage();
-            });
+            View delBtn = makeDownloadRowButton("✕ বাতিল", Color.rgb(248, 113, 113), true, true, () -> confirmDeleteDownload(d));
             bottomRow.addView(delBtn, new LinearLayout.LayoutParams(0, dp(34), 1.0f));
         } else {
             // Downloading, Queued, or Stopped (Paused)
@@ -3973,17 +3963,36 @@ public class MainActivity extends ComponentActivity {
             bottomRow.addView(pauseBtn, pauseLp);
 
             // ৩. স্টপ বাটন
-            View stopBtn = makeDownloadRowButton("✕ স্টপ", Color.rgb(248, 113, 113), true, true, () -> {
-                RasDownloads.remove(this, d);
-                RasDownloads.deleteThumbnail(this, d);
-                RasDownloads.deleteLocalVideo(this, d);
-                refreshDownloadPage();
-            });
+            View stopBtn = makeDownloadRowButton("✕ স্টপ", Color.rgb(248, 113, 113), true, true, () -> confirmDeleteDownload(d));
             bottomRow.addView(stopBtn, new LinearLayout.LayoutParams(0, dp(32), 1.0f));
         }
 
         card.addView(bottomRow, new LinearLayout.LayoutParams(-1, -2));
         return card;
+    }
+
+    private void confirmDeleteDownload(Download d) {
+        String title = RasDownloads.titleOf(this, d);
+        String actionPrompt = (d.state == Download.STATE_COMPLETED)
+                ? "এই ভিডিও ফাইলটি আপনার ডিভাইস থেকে সম্পূর্ণ মুছে ফেলা হবে।"
+                : "চলমান ডাউনলোডটি বাতিল ও ফাইলটি মুছে ফেলা হবে।";
+
+        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+        builder.setTitle(d.state == Download.STATE_COMPLETED ? "ভিডিওটি মুছে ফেলবেন?" : "ডাউনলোড বাতিল করবেন?");
+        builder.setMessage(""" + title + ""
+
+" + actionPrompt);
+        builder.setPositiveButton("মুছে ফেলুন", (dialog, which) -> {
+            RasDownloads.remove(this, d);
+            refreshDownloadPage();
+        });
+        builder.setNegativeButton("বাতিল", null);
+        android.app.AlertDialog dialog = builder.create();
+        dialog.show();
+        try {
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setTextColor(Color.rgb(239, 68, 68));
+            dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).setTextColor(Color.rgb(148, 163, 184));
+        } catch (Exception ignored) {}
     }
 
     private View makeDownloadRowButton(String text, int color, boolean active, boolean enabled, Runnable action) {
