@@ -114,7 +114,7 @@ public class RasDownloadService extends DownloadService {
         int percent = knownCount > 0 ? Math.round(percentSum / knownCount) : -1;
 
         String title = active == 1
-                ? RasDownloads.titleOf(single)
+                ? RasDownloads.titleOf(this, single)
                 : active + "টি ডাউনলোড চলছে";
 
         String status;
@@ -157,7 +157,8 @@ public class RasDownloadService extends DownloadService {
 
     private PendingIntent openAppIntent() {
         Intent intent = new Intent(this, MainActivity.class)
-                .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra("open_downloads", true);
         return PendingIntent.getActivity(this, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }

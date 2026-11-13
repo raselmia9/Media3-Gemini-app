@@ -170,11 +170,14 @@ public class MainActivity extends ComponentActivity {
     private Thread playlistLoadThread = null;
     private Thread htmlLoadThread;
 
-    private static final String CACHED_EVENT_HTML_FILE = "cached_event_code.html";
+    private static final String CACHED_EVENT_HTML_FILE = "cached_movie_ui.html";
     private static final String CACHED_PLAYLIST_HTML_FILE = "cached_playlist.html";
-    private static final String EVENT_HTML_URL = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/EventCode.html";
+    private static final String EVENT_HTML_URL = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/Movie%20UI.html";
     private static final String PLAYLIST_HTML_URL = "https://raw.githubusercontent.com/raselmia9/SNTT-ALL-DATA/refs/heads/main/Playlist.html";
     private boolean isEventHtmlLoaded = false;
+
+    private String currentMovieTitle = "";
+    private String currentMovieThumbnailUrl = "";
 
     private FrameLayout playerContainer;
     private FrameLayout customControlsOverlay;
@@ -3142,6 +3145,34 @@ public class MainActivity extends ComponentActivity {
         if (raw == null) return;
         String clean = raw.trim();
 
+        // Check if Movie UI JSON metadata was emitted
+        if (clean.startsWith("{") && clean.endsWith("}")) {
+            try {
+                JSONObject movieJson = new JSONObject(clean);
+                String title = movieJson.optString("title", "").trim();
+                String thumbnail = movieJson.optString("thumbnail", "").trim();
+                String videoUrl = movieJson.optString("videoUrl", "").trim();
+
+                currentMovieTitle = title;
+                currentMovieThumbnailUrl = thumbnail;
+
+                if (!videoUrl.isEmpty()) {
+                    hideEpisodeButtons();
+                    if (urlInput != null) {
+                        urlInput.setText(videoUrl);
+                        urlInput.setSelection(urlInput.getText().length());
+                    }
+                    setStatus(!title.isEmpty() ? "Playing: " + title : "Playing from web content");
+                    if (playerContainer != null) {
+                        playerContainer.setVisibility(View.VISIBLE);
+                        updatePipParams();
+                    }
+                    playStream();
+                }
+                return;
+            } catch (Exception ignored) {}
+        }
+
         // Check if the link contains Playlist>
         if ("ACTION>RETRY".equalsIgnoreCase(clean)) {
             setStatus("Retrying content load...");
@@ -3195,6 +3226,8 @@ public class MainActivity extends ComponentActivity {
         }
 
         // Single link fallback: put link into urlInput, reveal player, and auto-play
+        currentMovieTitle = "";
+        currentMovieThumbnailUrl = "";
         hideEpisodeButtons();
         if (!clean.isEmpty()) {
             if (urlInput != null) {
@@ -3601,7 +3634,7 @@ public class MainActivity extends ComponentActivity {
         topDownloadButton.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
-    // On-demand (not live), seekable, long enough, and not DRM protected = movie or series
+    // On-demand (not live), valid URL, and not DRM protected = downloadable
     private void updateDownloadAvailability() {
         boolean downloadable = false;
         try {
@@ -3610,11 +3643,7 @@ public class MainActivity extends ComponentActivity {
                     && currentConfig != null
                     && !currentConfig.url.isEmpty()
                     && currentConfig.drmScheme.isEmpty()
-                    && player.getPlaybackState() == Player.STATE_READY
-                    && !player.isCurrentMediaItemLive()
-                    && player.isCurrentMediaItemSeekable()
-                    && player.getDuration() != C.TIME_UNSET
-                    && player.getDuration() >= MIN_MOVIE_DURATION_MS;
+                    && !player.isCurrentMediaItemLive();
         } catch (Exception ignored) {}
         canDownloadNow = downloadable;
         applyDownloadButtonVisibility();
@@ -3629,14 +3658,22 @@ public class MainActivity extends ComponentActivity {
             toast("এই ভিডিওটি আগে থেকেই Downloads-এ আছে");
             return;
         }
+        String title = (currentMovieTitle != null && !currentMovieTitle.trim().isEmpty())
+                ? currentMovieTitle.trim()
+                : RasDownloads.titleFromUrl(currentConfig.url);
+        String thumbUrl = (currentMovieThumbnailUrl != null && !currentMovieThumbnailUrl.trim().isEmpty())
+                ? currentMovieThumbnailUrl.trim()
+                : null;
+
         RasDownloads.enqueue(
                 this,
                 currentConfig.url,
                 currentConfig.headers,
-                RasDownloads.titleFromUrl(currentConfig.url)
+                title,
+                thumbUrl
         );
-        toast("ডাউনলোড শুরু হয়েছে");
-        setStatus("Download started");
+        toast("ডাউনলোড শুরু হয়েছে: " + title);
+        setStatus("Download started: " + title);
     }
 
     private void buildDownloadPage(FrameLayout parent) {
@@ -3770,6 +3807,7 @@ public class MainActivity extends ComponentActivity {
         if (d.state == Download.STATE_COMPLETED) {
             thumbBox.setOnClickListener(v -> playOfflineDownload(d));
             RasDownloads.generateThumbnailIfNeeded(this, d, this::refreshDownloadPageLater);
+            RasDownloads.assembleOfflineVideoIfNeeded(this, d, this::refreshDownloadPageLater);
         }
         card.addView(thumbBox, new LinearLayout.LayoutParams(-1, dp(160)));
 
@@ -3778,7 +3816,7 @@ public class MainActivity extends ComponentActivity {
         body.setPadding(dp(14), dp(10), dp(14), dp(12));
 
         TextView name = new TextView(this);
-        name.setText(RasDownloads.titleOf(d));
+        name.setText(RasDownloads.titleOf(this, d));
         name.setTextColor(Color.WHITE);
         name.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
         name.setTypeface(null, Typeface.BOLD);
@@ -3792,6 +3830,18 @@ public class MainActivity extends ComponentActivity {
         info.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
         info.setPadding(0, dp(4), 0, 0);
         body.addView(info);
+
+        String localPath = RasDownloads.getLocalPath(this, d);
+        if (d.state == Download.STATE_COMPLETED && localPath != null && !localPath.isEmpty()) {
+            TextView pathView = new TextView(this);
+            pathView.setText("সংরক্ষিত পাথ: " + localPath);
+            pathView.setTextColor(Color.rgb(130, 150, 175));
+            pathView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
+            pathView.setSingleLine(true);
+            pathView.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+            pathView.setPadding(0, dp(2), 0, 0);
+            body.addView(pathView);
+        }
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -4093,6 +4143,11 @@ public class MainActivity extends ComponentActivity {
 
     private void handleIncomingIntent(Intent intent) {
         if (intent == null) return;
+        if (intent.getBooleanExtra("open_downloads", false)) {
+            dismissSplashScreen();
+            runOnUiThread(this::showDownloadPage);
+            return;
+        }
         String streamUrl = null;
         Uri data = intent.getData();
         if (data != null) {

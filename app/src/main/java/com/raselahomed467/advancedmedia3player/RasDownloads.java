@@ -1,10 +1,20 @@
 package com.raselahomed467.advancedmedia3player;
 
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.media.MediaDataSource;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
+import android.os.Build;
 
 import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
 import androidx.media3.database.DatabaseProvider;
 import androidx.media3.database.StandaloneDatabaseProvider;
 import androidx.media3.datasource.DataSource;
@@ -18,6 +28,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.offline.DefaultDownloadIndex;
 import androidx.media3.exoplayer.offline.DefaultDownloaderFactory;
 import androidx.media3.exoplayer.offline.Download;
+import androidx.media3.exoplayer.offline.DownloadCursor;
 import androidx.media3.exoplayer.offline.DownloadManager;
 import androidx.media3.exoplayer.offline.DownloadRequest;
 import androidx.media3.exoplayer.offline.DownloadService;
@@ -25,15 +36,22 @@ import androidx.media3.exoplayer.offline.DownloadService;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -48,7 +66,9 @@ import okhttp3.OkHttpClient;
 public final class RasDownloads {
 
     private static final String PREFS = "ras_download_headers";
+    private static final String PREFS_META = "ras_download_metadata";
     private static final String KEY_PRIVATE_STORAGE = "private_storage_v2";
+    private static final String CHANNEL_ID = "ras_downloads";
     private static final int USER_STOP_REASON = 1;
 
     private static DownloadManager manager;
@@ -61,11 +81,11 @@ public final class RasDownloads {
         if (manager != null) return;
 
         Context app = context.getApplicationContext();
+        ensureNotificationChannel(app);
+
         SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         boolean firstPrivateRun = !prefs.getBoolean(KEY_PRIVATE_STORAGE, false);
         if (firstPrivateRun) {
-            // Downloads from the older build lived in a folder the file manager could see.
-            // They cannot be played from the new private folder, so that old folder is removed once.
             File oldDir = app.getExternalFilesDir(null) == null
                     ? null
                     : new File(app.getExternalFilesDir(null), "downloads");
@@ -83,7 +103,6 @@ public final class RasDownloads {
 
         cache = new SimpleCache(base, new NoOpCacheEvictor(), databaseProvider);
 
-        // Download network calls: our headers are added per host, then OkHttp does the request.
         OkHttpDataSource.Factory okFactory = new OkHttpDataSource.Factory(new OkHttpClient.Builder().build());
         CacheDataSource.Factory downloadCacheFactory = new CacheDataSource.Factory()
                 .setCache(cache)
@@ -95,15 +114,41 @@ public final class RasDownloads {
         manager = new DownloadManager(app, new DefaultDownloadIndex(databaseProvider), downloaderFactory);
 
         if (firstPrivateRun) {
-            // Remove the index entries that pointed to the old folder.
             manager.removeAllDownloads();
             prefs.edit().putBoolean(KEY_PRIVATE_STORAGE, true).commit();
         }
 
-        // Offline playback: read only from the cache, never from the network.
         offlineReadFactory = new CacheDataSource.Factory()
                 .setCache(cache)
                 .setUpstreamDataSourceFactory(null);
+
+        // Global listener: on complete, assemble offline video file and show completion notification
+        manager.addListener(new DownloadManager.Listener() {
+            @Override
+            public void onDownloadChanged(DownloadManager downloadManager, Download download, @Nullable Exception finalException) {
+                if (download.state == Download.STATE_COMPLETED) {
+                    assembleOfflineVideoIfNeeded(app, download, null);
+                    generateThumbnailIfNeeded(app, download, null);
+                    showCompletedNotification(app, download);
+                }
+            }
+        });
+    }
+
+    private static void ensureNotificationChannel(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
+                NotificationChannel channel = new NotificationChannel(
+                        CHANNEL_ID,
+                        "Downloads",
+                        NotificationManager.IMPORTANCE_LOW
+                );
+                channel.setDescription("Video download progress and notifications");
+                channel.setShowBadge(true);
+                nm.createNotificationChannel(channel);
+            }
+        }
     }
 
     private static void deleteRecursively(@Nullable File file) {
@@ -128,11 +173,17 @@ public final class RasDownloads {
         return manager != null && manager.isInitialized();
     }
 
-    /** All downloads, newest activity first. Empty until the list is loaded. */
+    /** All downloads from persistent index, newest activity first. */
     public static List<Download> listForPage() {
         List<Download> out = new ArrayList<>();
         if (!isReady()) return out;
-        out.addAll(manager.getCurrentDownloads());
+        try (DownloadCursor cursor = manager.getDownloadIndex().getDownloads()) {
+            while (cursor.moveToNext()) {
+                out.add(cursor.getDownload());
+            }
+        } catch (Exception e) {
+            out.addAll(manager.getCurrentDownloads());
+        }
         Collections.sort(out, (a, b) -> Long.compare(b.updateTimeMs, a.updateTimeMs));
         return out;
     }
@@ -142,8 +193,17 @@ public final class RasDownloads {
     // ------------------------------------------------------------------
 
     public static void enqueue(Context context, String url, Map<String, String> headers, String title) {
+        enqueue(context, url, headers, title, null);
+    }
+
+    public static void enqueue(Context context, String url, Map<String, String> headers, String title, @Nullable String thumbnailUrl) {
         init(context);
         saveHeaders(context, url, headers);
+        saveMetadata(context, url, title, thumbnailUrl);
+
+        if (thumbnailUrl != null && !thumbnailUrl.trim().isEmpty()) {
+            fetchThumbnailFromUrl(context, url, thumbnailUrl.trim());
+        }
 
         Uri uri = Uri.parse(url);
         String mimeType = guessMimeType(url);
@@ -156,8 +216,6 @@ public final class RasDownloads {
         DownloadService.sendAddDownload(context, RasDownloadService.class, request, 0, true);
     }
 
-    // Returns the MIME type for HLS / DASH streams, or null for progressive files
-    // (Media3 infers the type from the URL when this is null).
     private static String guessMimeType(String url) {
         String lower = url.toLowerCase(Locale.ROOT);
         int q = lower.indexOf('?');
@@ -180,9 +238,11 @@ public final class RasDownloads {
     public static void remove(Context context, Download download) {
         DownloadService.sendRemoveDownload(context, RasDownloadService.class,
                 download.request.id, false);
+        deleteThumbnail(context, download);
+        deleteLocalVideo(context, download);
+        removeMetadata(context, download.request.id);
     }
 
-    /** Failed downloads cannot simply resume, so remove them and add the same request again. */
     public static void retry(Context context, Download download) {
         DownloadService.sendRemoveDownload(context, RasDownloadService.class,
                 download.request.id, false);
@@ -190,12 +250,14 @@ public final class RasDownloads {
                 download.request, 0, true);
     }
 
-    /** Resumes whatever is still unfinished when the app starts again. */
     public static boolean hasUnfinished(Context context) {
         init(context);
         if (!isReady()) return false;
+        try (DownloadCursor cursor = manager.getDownloadIndex().getDownloads(Download.STATE_QUEUED, Download.STATE_DOWNLOADING, Download.STATE_RESTARTING)) {
+            if (cursor.getCount() > 0) return true;
+        } catch (Exception ignored) {}
         for (Download d : manager.getCurrentDownloads()) {
-            if (d.state != Download.STATE_COMPLETED) return true;
+            if (d.state != Download.STATE_COMPLETED && d.state != Download.STATE_FAILED) return true;
         }
         return false;
     }
@@ -203,6 +265,10 @@ public final class RasDownloads {
     public static boolean isAlreadyAdded(Context context, String url) {
         init(context);
         if (!isReady()) return false;
+        try {
+            Download d = manager.getDownloadIndex().getDownload(url);
+            if (d != null && d.state != Download.STATE_REMOVING) return true;
+        } catch (Exception ignored) {}
         for (Download d : manager.getCurrentDownloads()) {
             if (url.equals(d.request.id)) return true;
         }
@@ -210,14 +276,207 @@ public final class RasDownloads {
     }
 
     // ------------------------------------------------------------------
+    // Metadata Persistence (Title, Thumbnail URL, Local File Path)
+    // ------------------------------------------------------------------
+
+    private static void saveMetadata(Context context, String url, String title, @Nullable String thumbnailUrl) {
+        try {
+            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(PREFS_META, Context.MODE_PRIVATE);
+            JSONObject json = new JSONObject();
+            json.put("title", title != null ? title : "");
+            json.put("thumbUrl", thumbnailUrl != null ? thumbnailUrl : "");
+            prefs.edit().putString(keyForUrl(url), json.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    public static String getSavedTitle(Context context, String url) {
+        try {
+            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(PREFS_META, Context.MODE_PRIVATE);
+            String raw = prefs.getString(keyForUrl(url), null);
+            if (raw != null) {
+                JSONObject json = new JSONObject(raw);
+                String t = json.optString("title", "");
+                if (!t.isEmpty()) return t;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    public static String getSavedThumbUrl(Context context, String url) {
+        try {
+            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(PREFS_META, Context.MODE_PRIVATE);
+            String raw = prefs.getString(keyForUrl(url), null);
+            if (raw != null) {
+                JSONObject json = new JSONObject(raw);
+                return json.optString("thumbUrl", null);
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    public static void saveLocalPath(Context context, String url, String path) {
+        try {
+            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(PREFS_META, Context.MODE_PRIVATE);
+            String raw = prefs.getString(keyForUrl(url), null);
+            JSONObject json = raw != null ? new JSONObject(raw) : new JSONObject();
+            json.put("localPath", path != null ? path : "");
+            prefs.edit().putString(keyForUrl(url), json.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    public static String getLocalPath(Context context, Download d) {
+        try {
+            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(PREFS_META, Context.MODE_PRIVATE);
+            String raw = prefs.getString(keyOf(d), null);
+            if (raw != null) {
+                JSONObject json = new JSONObject(raw);
+                String p = json.optString("localPath", "");
+                if (!p.isEmpty()) return p;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private static void removeMetadata(Context context, String url) {
+        try {
+            context.getApplicationContext()
+                    .getSharedPreferences(PREFS_META, Context.MODE_PRIVATE)
+                    .edit()
+                    .remove(keyForUrl(url))
+                    .apply();
+        } catch (Exception ignored) {}
+    }
+
+    // ------------------------------------------------------------------
+    // Offline Video File Assembly / Location
+    // ------------------------------------------------------------------
+
+    public static File getOfflineFolder(Context context) {
+        File dir = new File(context.getApplicationContext().getFilesDir(), "offline_videos");
+        if (!dir.exists()) dir.mkdirs();
+        try {
+            File nomedia = new File(dir, ".nomedia");
+            if (!nomedia.exists()) nomedia.createNewFile();
+        } catch (Exception ignored) {}
+        return dir;
+    }
+
+    public static File getLocalVideoFile(Context context, Download d) {
+        String path = getLocalPath(context, d);
+        if (path != null && !path.isEmpty()) {
+            File f = new File(path);
+            if (f.exists() && f.length() > 0) return f;
+        }
+        File f = new File(getOfflineFolder(context), keyOf(d) + ".mp4");
+        if (f.exists() && f.length() > 0) return f;
+        return null;
+    }
+
+    private static final Set<String> assembleJobs = new HashSet<>();
+
+    public static void assembleOfflineVideoIfNeeded(Context context, Download d, @Nullable Runnable onDone) {
+        if (d.state != Download.STATE_COMPLETED) return;
+        Context app = context.getApplicationContext();
+
+        String mime = guessMimeType(d.request.id);
+        if (mime != null) {
+            saveLocalPath(app, d.request.id, "Media3 Cache (HLS/DASH)");
+            if (onDone != null) onDone.run();
+            return;
+        }
+
+        File outFile = new File(getOfflineFolder(app), keyOf(d) + ".mp4");
+        if (outFile.exists() && outFile.length() > 0) {
+            saveLocalPath(app, d.request.id, outFile.getAbsolutePath());
+            if (onDone != null) onDone.run();
+            return;
+        }
+
+        String key = keyOf(d);
+        synchronized (RasDownloads.class) {
+            if (!assembleJobs.add(key)) return;
+        }
+
+        new Thread(() -> {
+            try {
+                if (offlineReadFactory != null) {
+                    DataSource ds = offlineReadFactory.createDataSource();
+                    long bytes = ds.open(new DataSpec(d.request.uri));
+                    if (bytes != 0) {
+                        try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                            byte[] buffer = new byte[128 * 1024];
+                            int read;
+                            while ((read = ds.read(buffer, 0, buffer.length)) != androidx.media3.common.C.RESULT_END_OF_INPUT) {
+                                fos.write(buffer, 0, read);
+                            }
+                            fos.flush();
+                        }
+                        if (outFile.exists() && outFile.length() > 0) {
+                            saveLocalPath(app, d.request.id, outFile.getAbsolutePath());
+                        }
+                    }
+                    try { ds.close(); } catch (Exception ignored) {}
+                }
+            } catch (Exception e) {
+                if (outFile.exists()) outFile.delete();
+            } finally {
+                synchronized (RasDownloads.class) {
+                    assembleJobs.remove(key);
+                }
+                if (onDone != null) {
+                    onDone.run();
+                }
+            }
+        }, "ras-assemble-video").start();
+    }
+
+    public static void deleteLocalVideo(Context context, Download d) {
+        try {
+            File f = getLocalVideoFile(context, d);
+            if (f != null && f.exists()) f.delete();
+        } catch (Exception ignored) {}
+    }
+
+    public static void showCompletedNotification(Context context, Download d) {
+        try {
+            String title = titleOf(context, d);
+            Intent intent = new Intent(context, MainActivity.class)
+                    .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    .putExtra("open_downloads", true);
+            PendingIntent pi = PendingIntent.getActivity(context, d.request.id.hashCode() + 2000, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setSmallIcon(R.drawable.app_icon)
+                    .setContentTitle("ডাউনলোড সম্পন্ন: " + title)
+                    .setContentText("প্লে করতে ট্যাপ করুন")
+                    .setAutoCancel(true)
+                    .setContentIntent(pi)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH);
+
+            NotificationManager nm = (NotificationManager)
+                    context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.notify(d.request.id.hashCode() + 10000, builder.build());
+            }
+        } catch (Exception ignored) {}
+    }
+
+    // ------------------------------------------------------------------
     // Labels and progress
     // ------------------------------------------------------------------
+
+    public static String titleOf(Context context, Download download) {
+        String saved = getSavedTitle(context, download.request.id);
+        if (saved != null && !saved.isEmpty()) return saved;
+        return titleOf(download);
+    }
 
     public static String titleOf(Download download) {
         if (download.request.data != null && download.request.data.length > 0) {
             return new String(download.request.data, StandardCharsets.UTF_8);
         }
-        return download.request.id;
+        return titleFromUrl(download.request.id);
     }
 
     public static String titleFromUrl(String url) {
@@ -228,7 +487,6 @@ public final class RasDownloads {
         return "Video";
     }
 
-    /** Percent downloaded (0-100), or -1 while the total size is still unknown. */
     public static int percentOf(Download d) {
         float p = d.getPercentDownloaded();
         return p >= 0 ? Math.round(p) : -1;
@@ -365,12 +623,13 @@ public final class RasDownloads {
             delegate.close();
         }
     }
+
     // ------------------------------------------------------------------
-    // Thumbnails, made from the finished local copy
+    // Thumbnails (Remote Banner or Video Frame)
     // ------------------------------------------------------------------
 
-    private static final Map<String, android.graphics.Bitmap> thumbBitmaps = new HashMap<>();
-    private static final java.util.Set<String> thumbJobs = new java.util.HashSet<>();
+    private static final Map<String, Bitmap> thumbBitmaps = new HashMap<>();
+    private static final Set<String> thumbJobs = new HashSet<>();
 
     private static File thumbDir(Context context) {
         File dir = new File(context.getApplicationContext().getFilesDir(), "offline_thumbs");
@@ -378,34 +637,70 @@ public final class RasDownloads {
         return dir;
     }
 
-    private static String keyOf(Download d) {
+    public static String keyForUrl(String url) {
         try {
-            byte[] hash = java.security.MessageDigest.getInstance("SHA-1")
-                    .digest(d.request.id.getBytes(StandardCharsets.UTF_8));
+            byte[] hash = MessageDigest.getInstance("SHA-1")
+                    .digest(url.getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder();
             for (byte b : hash) sb.append(String.format(Locale.US, "%02x", b));
             return sb.toString();
         } catch (Exception e) {
-            return String.valueOf(d.request.id.hashCode());
+            return String.valueOf(url.hashCode());
         }
+    }
+
+    public static String keyOf(Download d) {
+        return keyForUrl(d.request.id);
     }
 
     private static File thumbFile(Context context, Download d) {
         return new File(thumbDir(context), keyOf(d) + ".jpg");
     }
 
+    private static File thumbFileForUrl(Context context, String url) {
+        return new File(thumbDir(context), keyForUrl(url) + ".jpg");
+    }
+
     private static File failFile(Context context, Download d) {
         return new File(thumbDir(context), keyOf(d) + ".fail");
     }
 
-    /** The saved thumbnail, or null when none has been made yet. */
-    public static synchronized android.graphics.Bitmap loadThumbnail(Context context, Download d) {
+    public static void fetchThumbnailFromUrl(Context context, String url, String thumbnailUrl) {
+        if (thumbnailUrl == null || thumbnailUrl.trim().isEmpty()) return;
+        Context app = context.getApplicationContext();
+        File thumb = thumbFileForUrl(app, url);
+        if (thumb.exists() && thumb.length() > 0) return;
+
+        new Thread(() -> {
+            try {
+                URL u = new URL(thumbnailUrl);
+                HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setDoInput(true);
+                conn.connect();
+                try (InputStream in = conn.getInputStream();
+                     FileOutputStream out = new FileOutputStream(thumb)) {
+                    Bitmap bmp = BitmapFactory.decodeStream(in);
+                    if (bmp != null) {
+                        Bitmap small = scaleTo(bmp, 480);
+                        small.compress(Bitmap.CompressFormat.JPEG, 85, out);
+                        synchronized (RasDownloads.class) {
+                            thumbBitmaps.put(keyForUrl(url), small);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }, "ras-thumb-fetch").start();
+    }
+
+    public static synchronized Bitmap loadThumbnail(Context context, Download d) {
         String key = keyOf(d);
-        android.graphics.Bitmap cached = thumbBitmaps.get(key);
+        Bitmap cached = thumbBitmaps.get(key);
         if (cached != null) return cached;
         File f = thumbFile(context, d);
         if (!f.exists()) return null;
-        android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath());
+        Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
         if (bmp != null) thumbBitmaps.put(key, bmp);
         return bmp;
     }
@@ -416,14 +711,22 @@ public final class RasDownloads {
         failFile(context, d).delete();
     }
 
-    /**
-     * Makes a thumbnail from a completed single-file download (MP4, MKV and similar).
-     * Segmented streams (HLS / DASH) keep the placeholder. Runs in the background.
-     */
-    public static void generateThumbnailIfNeeded(Context context, Download d, Runnable onDone) {
+    public static void generateThumbnailIfNeeded(Context context, Download d, @Nullable Runnable onDone) {
         if (d.state != Download.STATE_COMPLETED) return;
         Context app = context.getApplicationContext();
-        if (thumbFile(app, d).exists() || failFile(app, d).exists()) return;
+        if (thumbFile(app, d).exists() || failFile(app, d).exists()) {
+            if (onDone != null) onDone.run();
+            return;
+        }
+
+        String savedThumbUrl = getSavedThumbUrl(app, d.request.id);
+        if (savedThumbUrl != null && !savedThumbUrl.trim().isEmpty()) {
+            fetchThumbnailFromUrl(app, d.request.id, savedThumbUrl.trim());
+            if (thumbFile(app, d).exists()) {
+                if (onDone != null) onDone.run();
+                return;
+            }
+        }
 
         String key = keyOf(d);
         synchronized (RasDownloads.class) {
@@ -432,7 +735,7 @@ public final class RasDownloads {
 
         new Thread(() -> {
             boolean ok = false;
-            android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
+            MediaMetadataRetriever retriever = new MediaMetadataRetriever();
             try {
                 String lower = d.request.id.toLowerCase(Locale.ROOT);
                 if (lower.contains(".m3u8") || lower.contains(".mpd")) {
@@ -440,22 +743,21 @@ public final class RasDownloads {
                 }
                 retriever.setDataSource(new CacheMediaSource(Uri.parse(d.request.id), offlineReadFactory));
 
-                String durText = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+                String durText = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
                 long durationMs = durText == null ? 0 : Long.parseLong(durText);
                 long atMs = durationMs > 0 ? Math.min(durationMs / 10, 30_000) : 2_000;
 
-                android.graphics.Bitmap frame = retriever.getFrameAtTime(
-                        atMs * 1000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                Bitmap frame = retriever.getFrameAtTime(
+                        atMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
                 if (frame == null) frame = retriever.getFrameAtTime(0);
                 if (frame != null) {
-                    android.graphics.Bitmap small = scaleTo(frame, 480);
-                    try (java.io.FileOutputStream out = new java.io.FileOutputStream(thumbFile(app, d))) {
-                        small.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out);
+                    Bitmap small = scaleTo(frame, 480);
+                    try (FileOutputStream out = new FileOutputStream(thumbFile(app, d))) {
+                        small.compress(Bitmap.CompressFormat.JPEG, 85, out);
                     }
                     ok = true;
                 }
             } catch (Exception ignored) {
-                // No frame could be read; the placeholder stays.
             } finally {
                 try { retriever.release(); } catch (Exception ignored) {}
             }
@@ -470,14 +772,13 @@ public final class RasDownloads {
         }, "ras-thumb").start();
     }
 
-    private static android.graphics.Bitmap scaleTo(android.graphics.Bitmap src, int width) {
+    private static Bitmap scaleTo(Bitmap src, int width) {
         if (src.getWidth() <= width) return src;
         int height = Math.round(src.getHeight() * (width / (float) src.getWidth()));
-        return android.graphics.Bitmap.createScaledBitmap(src, width, height, true);
+        return Bitmap.createScaledBitmap(src, width, height, true);
     }
 
-    /** Lets the metadata reader read the cached copy of a finished download. */
-    private static final class CacheMediaSource extends android.media.MediaDataSource {
+    private static final class CacheMediaSource extends MediaDataSource {
         private final Uri uri;
         private final CacheDataSource.Factory factory;
         private DataSource source;
