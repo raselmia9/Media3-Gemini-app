@@ -171,7 +171,7 @@ public final class RasDownloads {
     }
 
     public static CacheDataSource.Factory getPlaybackCacheFactory(Context context) {
-        initIfNeeded(context);
+        init(context);
         return offlineReadFactory;
     }
 
