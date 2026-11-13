@@ -170,6 +170,11 @@ public final class RasDownloads {
         return offlineReadFactory;
     }
 
+    public static CacheDataSource.Factory getPlaybackCacheFactory(Context context) {
+        initIfNeeded(context);
+        return offlineReadFactory;
+    }
+
     /** True once the saved download list has been loaded from the database. */
     public static boolean isReady() {
         return manager != null && manager.isInitialized();
