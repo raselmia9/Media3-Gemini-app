@@ -55,7 +55,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AppCompatActivity;
+import androidx.activity.ComponentActivity;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -100,7 +100,7 @@ import java.util.Locale;
 import java.util.Map;
 
 @UnstableApi
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends ComponentActivity {
 
     private ExoPlayer player;
     private PlayerView playerView;
