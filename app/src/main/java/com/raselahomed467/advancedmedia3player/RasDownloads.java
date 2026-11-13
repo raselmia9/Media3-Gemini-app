@@ -97,7 +97,7 @@ public final class RasDownloads {
         if (firstPrivateRun) {
             // Remove the index entries that pointed to the old folder.
             manager.removeAllDownloads();
-            prefs.edit().putBoolean(KEY_PRIVATE_STORAGE, true).apply();
+            prefs.edit().putBoolean(KEY_PRIVATE_STORAGE, true).commit();
         }
 
         // Offline playback: read only from the cache, never from the network.
@@ -363,6 +363,168 @@ public final class RasDownloads {
         @Override
         public void close() throws IOException {
             delegate.close();
+        }
+    }
+    // ------------------------------------------------------------------
+    // Thumbnails, made from the finished local copy
+    // ------------------------------------------------------------------
+
+    private static final Map<String, android.graphics.Bitmap> thumbBitmaps = new HashMap<>();
+    private static final java.util.Set<String> thumbJobs = new java.util.HashSet<>();
+
+    private static File thumbDir(Context context) {
+        File dir = new File(context.getApplicationContext().getFilesDir(), "offline_thumbs");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    private static String keyOf(Download d) {
+        try {
+            byte[] hash = java.security.MessageDigest.getInstance("SHA-1")
+                    .digest(d.request.id.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format(Locale.US, "%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return String.valueOf(d.request.id.hashCode());
+        }
+    }
+
+    private static File thumbFile(Context context, Download d) {
+        return new File(thumbDir(context), keyOf(d) + ".jpg");
+    }
+
+    private static File failFile(Context context, Download d) {
+        return new File(thumbDir(context), keyOf(d) + ".fail");
+    }
+
+    /** The saved thumbnail, or null when none has been made yet. */
+    public static synchronized android.graphics.Bitmap loadThumbnail(Context context, Download d) {
+        String key = keyOf(d);
+        android.graphics.Bitmap cached = thumbBitmaps.get(key);
+        if (cached != null) return cached;
+        File f = thumbFile(context, d);
+        if (!f.exists()) return null;
+        android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath());
+        if (bmp != null) thumbBitmaps.put(key, bmp);
+        return bmp;
+    }
+
+    public static synchronized void deleteThumbnail(Context context, Download d) {
+        thumbBitmaps.remove(keyOf(d));
+        thumbFile(context, d).delete();
+        failFile(context, d).delete();
+    }
+
+    /**
+     * Makes a thumbnail from a completed single-file download (MP4, MKV and similar).
+     * Segmented streams (HLS / DASH) keep the placeholder. Runs in the background.
+     */
+    public static void generateThumbnailIfNeeded(Context context, Download d, Runnable onDone) {
+        if (d.state != Download.STATE_COMPLETED) return;
+        Context app = context.getApplicationContext();
+        if (thumbFile(app, d).exists() || failFile(app, d).exists()) return;
+
+        String key = keyOf(d);
+        synchronized (RasDownloads.class) {
+            if (!thumbJobs.add(key)) return;
+        }
+
+        new Thread(() -> {
+            boolean ok = false;
+            android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
+            try {
+                String lower = d.request.id.toLowerCase(Locale.ROOT);
+                if (lower.contains(".m3u8") || lower.contains(".mpd")) {
+                    throw new IOException("segmented stream");
+                }
+                retriever.setDataSource(new CacheMediaSource(Uri.parse(d.request.id), offlineReadFactory));
+
+                String durText = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+                long durationMs = durText == null ? 0 : Long.parseLong(durText);
+                long atMs = durationMs > 0 ? Math.min(durationMs / 10, 30_000) : 2_000;
+
+                android.graphics.Bitmap frame = retriever.getFrameAtTime(
+                        atMs * 1000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                if (frame == null) frame = retriever.getFrameAtTime(0);
+                if (frame != null) {
+                    android.graphics.Bitmap small = scaleTo(frame, 480);
+                    try (java.io.FileOutputStream out = new java.io.FileOutputStream(thumbFile(app, d))) {
+                        small.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out);
+                    }
+                    ok = true;
+                }
+            } catch (Exception ignored) {
+                // No frame could be read; the placeholder stays.
+            } finally {
+                try { retriever.release(); } catch (Exception ignored) {}
+            }
+
+            if (!ok) {
+                try { failFile(app, d).createNewFile(); } catch (IOException ignored) {}
+            }
+            synchronized (RasDownloads.class) {
+                thumbJobs.remove(key);
+            }
+            if (onDone != null) onDone.run();
+        }, "ras-thumb").start();
+    }
+
+    private static android.graphics.Bitmap scaleTo(android.graphics.Bitmap src, int width) {
+        if (src.getWidth() <= width) return src;
+        int height = Math.round(src.getHeight() * (width / (float) src.getWidth()));
+        return android.graphics.Bitmap.createScaledBitmap(src, width, height, true);
+    }
+
+    /** Lets the metadata reader read the cached copy of a finished download. */
+    private static final class CacheMediaSource extends android.media.MediaDataSource {
+        private final Uri uri;
+        private final CacheDataSource.Factory factory;
+        private DataSource source;
+        private long position = -1;
+        private long length = -2;
+
+        CacheMediaSource(Uri uri, CacheDataSource.Factory factory) {
+            this.uri = uri;
+            this.factory = factory;
+        }
+
+        @Override
+        public synchronized long getSize() throws IOException {
+            if (length == -2) {
+                closeSource();
+                source = factory.createDataSource();
+                length = source.open(new DataSpec(uri));
+                position = 0;
+            }
+            return length;
+        }
+
+        @Override
+        public synchronized int readAt(long pos, byte[] buffer, int offset, int size) throws IOException {
+            if (length >= 0 && pos >= length) return -1;
+            if (source == null || pos != position) {
+                closeSource();
+                source = factory.createDataSource();
+                source.open(new DataSpec(uri, pos, androidx.media3.common.C.LENGTH_UNSET));
+                position = pos;
+            }
+            int read = source.read(buffer, offset, size);
+            if (read == androidx.media3.common.C.RESULT_END_OF_INPUT) return -1;
+            position += read;
+            return read;
+        }
+
+        @Override
+        public synchronized void close() {
+            closeSource();
+        }
+
+        private void closeSource() {
+            if (source != null) {
+                try { source.close(); } catch (IOException ignored) {}
+                source = null;
+            }
         }
     }
 }
