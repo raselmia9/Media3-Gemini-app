@@ -110,10 +110,11 @@ public final class RasDownloads {
                 .setCache(cache)
                 .setUpstreamDataSourceFactory(new HeaderFactory(app, okFactory));
 
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(6);
         DefaultDownloaderFactory downloaderFactory = new DefaultDownloaderFactory(downloadCacheFactory, executor);
 
         manager = new DownloadManager(app, new DefaultDownloadIndex(databaseProvider), downloaderFactory);
+        manager.setMaxParallelDownloads(5);
 
         if (firstPrivateRun) {
             manager.removeAllDownloads();
@@ -243,11 +244,26 @@ public final class RasDownloads {
     }
 
     public static void remove(Context context, Download download) {
+        if (download == null || download.request == null) return;
+        init(context);
+        try {
+            if (manager != null) {
+                manager.removeDownload(download.request.id);
+            }
+        } catch (Exception ignored) {}
         DownloadService.sendRemoveDownload(context, RasDownloadService.class,
                 download.request.id, false);
         deleteThumbnail(context, download);
         deleteLocalVideo(context, download);
         removeMetadata(context, download.request.id);
+        try {
+            android.app.NotificationManager nm = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                int notifId = Math.abs(download.request.id.hashCode());
+                if (notifId == 1001) notifId = 1002;
+                nm.cancel(notifId);
+            }
+        } catch (Exception ignored) {}
     }
 
     public static void retry(Context context, Download download) {
