@@ -3793,15 +3793,29 @@ public class MainActivity extends ComponentActivity {
 
     private View buildDownloadRow(Download d) {
         LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
         GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setColor(Color.argb(180, 35, 48, 67));
-        cardBg.setCornerRadius(dp(14));
+        cardBg.setColor(Color.argb(230, 22, 30, 44));
+        cardBg.setCornerRadius(dp(12));
+        cardBg.setStroke(dp(1), Color.argb(45, 255, 255, 255));
         card.setBackground(cardBg);
         card.setClipToOutline(true);
+        card.setPadding(dp(10), dp(10), dp(12), dp(10));
 
+        // 1. Poster Thumbnail (Left)
         FrameLayout thumbBox = new FrameLayout(this);
-        thumbBox.setBackgroundColor(Color.rgb(20, 28, 42));
+        GradientDrawable thumbBg = new GradientDrawable();
+        thumbBg.setColor(Color.rgb(15, 22, 34));
+        thumbBg.setCornerRadius(dp(8));
+        thumbBox.setBackground(thumbBg);
+        thumbBox.setClipToOutline(true);
+
+        int thumbW = dp(112);
+        int thumbH = dp(68);
+        LinearLayout.LayoutParams thumbParams = new LinearLayout.LayoutParams(thumbW, thumbH);
+        thumbParams.rightMargin = dp(12);
+
         android.graphics.Bitmap thumb = RasDownloads.loadThumbnail(this, d);
         if (thumb != null) {
             ImageView thumbView = new ImageView(this);
@@ -3812,71 +3826,147 @@ public class MainActivity extends ComponentActivity {
             TextView placeholder = new TextView(this);
             placeholder.setText(d.state == Download.STATE_COMPLETED ? "▶" : "⬇");
             placeholder.setTextColor(Color.rgb(120, 140, 165));
-            placeholder.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 34);
+            placeholder.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 24);
             placeholder.setGravity(Gravity.CENTER);
             thumbBox.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
         }
+
+        // Small badge on thumbnail
+        TextView badge = new TextView(this);
+        badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 8.5f);
+        badge.setTextColor(Color.WHITE);
+        badge.setTypeface(null, Typeface.BOLD);
+        GradientDrawable badgeBg = new GradientDrawable();
+        badgeBg.setCornerRadius(dp(4));
+
+        if (d.state == Download.STATE_COMPLETED) {
+            badge.setText("OFFLINE");
+            badgeBg.setColor(Color.argb(210, 16, 185, 129));
+        } else if (d.state == Download.STATE_DOWNLOADING) {
+            badge.setText((int) RasDownloads.percentOf(d) + "%");
+            badgeBg.setColor(Color.argb(210, 14, 165, 233));
+        } else if (d.state == Download.STATE_FAILED) {
+            badge.setText("ERROR");
+            badgeBg.setColor(Color.argb(210, 239, 68, 68));
+        } else {
+            badge.setText("PAUSED");
+            badgeBg.setColor(Color.argb(210, 100, 116, 139));
+        }
+        badge.setBackground(badgeBg);
+        badge.setPadding(dp(5), dp(2), dp(5), dp(2));
+        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.LEFT);
+        badgeParams.setMargins(dp(4), 0, 0, dp(4));
+        thumbBox.addView(badge, badgeParams);
+
         if (d.state == Download.STATE_COMPLETED) {
             thumbBox.setOnClickListener(v -> playOfflineDownload(d));
             card.setOnClickListener(v -> playOfflineDownload(d));
             RasDownloads.generateThumbnailIfNeeded(this, d, null);
             RasDownloads.assembleOfflineVideoIfNeeded(this, d, null);
         }
-        card.addView(thumbBox, new LinearLayout.LayoutParams(-1, dp(160)));
+        card.addView(thumbBox, thumbParams);
 
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(14), dp(10), dp(14), dp(12));
+        // 2. Info / Meta (Center)
+        LinearLayout meta = new LinearLayout(this);
+        meta.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(0, -2, 1.0f);
+        metaParams.rightMargin = dp(10);
 
-        TextView name = new TextView(this);
-        name.setText(RasDownloads.titleOf(this, d));
-        name.setTextColor(Color.WHITE);
-        name.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
-        name.setTypeface(null, Typeface.BOLD);
-        name.setSingleLine(true);
-        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        body.addView(name);
+        TextView titleView = new TextView(this);
+        titleView.setText(RasDownloads.titleOf(this, d));
+        titleView.setTextColor(Color.WHITE);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        titleView.setTypeface(null, Typeface.BOLD);
+        titleView.setMaxLines(2);
+        titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        meta.addView(titleView);
 
-        TextView info = new TextView(this);
-        info.setText(RasDownloads.stateLabel(d));
-        info.setTextColor(Color.rgb(170, 185, 205));
-        info.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
-        info.setPadding(0, dp(4), 0, 0);
-        body.addView(info);
+        TextView infoView = new TextView(this);
+        infoView.setText(RasDownloads.stateLabel(d));
+        infoView.setTextColor(Color.rgb(148, 163, 184));
+        infoView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        infoView.setPadding(0, dp(3), 0, 0);
+        meta.addView(infoView);
 
-        String localPath = RasDownloads.getLocalPath(this, d);
-        if (d.state == Download.STATE_COMPLETED && localPath != null && !localPath.isEmpty()) {
-            TextView pathView = new TextView(this);
-            pathView.setText("সংরক্ষিত পাথ: " + localPath);
-            pathView.setTextColor(Color.rgb(130, 150, 175));
-            pathView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
-            pathView.setSingleLine(true);
-            pathView.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-            pathView.setPadding(0, dp(2), 0, 0);
-            body.addView(pathView);
+        if (d.state == Download.STATE_DOWNLOADING || d.state == Download.STATE_QUEUED) {
+            ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            bar.setMax(100);
+            bar.setProgress((int) Math.max(0, Math.min(100, RasDownloads.percentOf(d))));
+            bar.setIndeterminate(false);
+            LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, dp(4));
+            barParams.topMargin = dp(6);
+            meta.addView(bar, barParams);
         }
 
+        card.addView(meta, metaParams);
+
+        // 3. Actions (Right)
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setPadding(0, dp(10), 0, 0);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
 
         if (d.state == Download.STATE_COMPLETED) {
-            actions.addView(makeDownloadActionButton("Play", true, () -> playOfflineDownload(d)));
+            FrameLayout playCircle = new FrameLayout(this);
+            int circleSize = dp(38);
+            LinearLayout.LayoutParams circleParams = new LinearLayout.LayoutParams(circleSize, circleSize);
+            GradientDrawable playBg = new GradientDrawable();
+            playBg.setShape(GradientDrawable.OVAL);
+            playBg.setColors(new int[]{Color.rgb(6, 182, 212), Color.rgb(59, 130, 246)});
+            playBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+            playCircle.setBackground(playBg);
+
+            TextView playIcon = new TextView(this);
+            playIcon.setText("▶");
+            playIcon.setTextColor(Color.WHITE);
+            playIcon.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+            playIcon.setGravity(Gravity.CENTER);
+            playCircle.addView(playIcon, new FrameLayout.LayoutParams(-1, -1));
+            playCircle.setOnClickListener(v -> playOfflineDownload(d));
+            actions.addView(playCircle, circleParams);
         } else if (d.state == Download.STATE_DOWNLOADING || d.state == Download.STATE_QUEUED) {
-            actions.addView(makeDownloadActionButton("Pause", false, () -> RasDownloads.pause(this, d)));
+            actions.addView(makeRoundIconButton("❚❚", Color.rgb(251, 191, 36), () -> RasDownloads.pause(this, d)));
         } else if (d.state == Download.STATE_STOPPED) {
-            actions.addView(makeDownloadActionButton("Resume", true, () -> RasDownloads.resume(this, d)));
+            actions.addView(makeRoundIconButton("▶", Color.rgb(56, 189, 248), () -> RasDownloads.resume(this, d)));
         } else if (d.state == Download.STATE_FAILED) {
-            actions.addView(makeDownloadActionButton("Retry", true, () -> RasDownloads.retry(this, d)));
+            actions.addView(makeRoundIconButton("↻", Color.rgb(248, 113, 113), () -> RasDownloads.retry(this, d)));
         }
-        actions.addView(makeDownloadActionButton("Delete", false, () -> {
+
+        FrameLayout delCircle = makeRoundIconButton("✕", Color.rgb(248, 113, 113), () -> {
             RasDownloads.remove(this, d);
             RasDownloads.deleteThumbnail(this, d);
-        }));
+            RasDownloads.deleteLocalVideo(this, d);
+            refreshDownloadPage();
+        });
+        LinearLayout.LayoutParams delParams = (LinearLayout.LayoutParams) delCircle.getLayoutParams();
+        delParams.leftMargin = dp(8);
+        actions.addView(delCircle);
 
-        body.addView(actions);
-        card.addView(body);
+        card.addView(actions);
         return card;
+    }
+
+    private FrameLayout makeRoundIconButton(String symbol, int color, Runnable action) {
+        FrameLayout btn = new FrameLayout(this);
+        int size = dp(34);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
+        btn.setLayoutParams(lp);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(Color.argb(45, Color.red(color), Color.green(color), Color.blue(color)));
+        bg.setStroke(dp(1), Color.argb(90, Color.red(color), Color.green(color), Color.blue(color)));
+        btn.setBackground(bg);
+
+        TextView icon = new TextView(this);
+        icon.setText(symbol);
+        icon.setTextColor(color);
+        icon.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        icon.setTypeface(null, Typeface.BOLD);
+        icon.setGravity(Gravity.CENTER);
+        btn.addView(icon, new FrameLayout.LayoutParams(-1, -1));
+
+        btn.setOnClickListener(v -> action.run());
+        return btn;
     }
 
     private TextView makeDownloadActionButton(String text, boolean primary, Runnable action) {
