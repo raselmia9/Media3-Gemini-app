@@ -1,0 +1,4 @@
+<resources>
+    <string name="download_channel_name">Downloads</string>
+    <string name="download_channel_description">Movie and series downloads</string>
+</resources>
