@@ -1,6 +1,8 @@
 package com.raselahomed467.advancedmedia3player;
 
 import android.content.Context;
+import org.json.JSONException;
+import org.json.JSONObject;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.Outline;
