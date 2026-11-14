@@ -276,6 +276,8 @@ public class MainActivity extends ComponentActivity {
                 if (dur > 0) {
                     customSeekBar.setMax((int) dur);
                     customSeekBar.setProgress((int) pos);
+                    long buffered = Math.max(0, Math.min(dur, player.getBufferedPosition()));
+                    customSeekBar.setSecondaryProgress((int) buffered);
                     timeCurrent.setText(formatTime(pos));
                     timeDuration.setText(formatTime(dur));
                 } else {
@@ -830,7 +832,7 @@ public class MainActivity extends ComponentActivity {
         buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
 
         // 1. Picture in Picture (PiP) Mode Icon (using picture_in_picture.png)
-        addControllerIconButton(buttonsRow, "picture_in_picture", "▣", "Mini Player", this::toggleInAppMiniPlayer);
+        addControllerIconButton(buttonsRow, "picture_in_picture", "▣", "Picture in Picture", () -> enterPictureInPicture(true));
 
         // 1b. Playback speed (using speed.png), placed between PiP and Rewind
         speedButton = addControllerIconButton(buttonsRow, "speed", "⏱", "Playback speed", this::showSpeedDialog);
@@ -876,6 +878,8 @@ public class MainActivity extends ComponentActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             customSeekBar.setProgressTintList(ColorStateList.valueOf(PRIMARY_COLOR));
             customSeekBar.setThumbTintList(ColorStateList.valueOf(Color.WHITE));
+            customSeekBar.setSecondaryProgressTintList(ColorStateList.valueOf(Color.argb(120, 255, 255, 255)));
+            customSeekBar.setProgressBackgroundTintList(ColorStateList.valueOf(Color.argb(60, 255, 255, 255)));
         }
         LinearLayout.LayoutParams seekParams = new LinearLayout.LayoutParams(0, -2, 1f);
         seekParams.leftMargin = dp(8);
@@ -3118,10 +3122,21 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void enterPictureInPicture() {
+        enterPictureInPicture(false);
+    }
+
+    // manual = true when the user presses the PiP button; then playback state is not required.
+    private void enterPictureInPicture(boolean manual) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            if (manual) toast("এই ফোনে Picture-in-Picture সমর্থিত নয়");
             return;
         }
-        if (!canAutoEnterPip()) {
+        if (manual) {
+            if (player == null || player.getMediaItemCount() == 0) {
+                toast("আগে একটি ভিডিও চালু করুন");
+                return;
+            }
+        } else if (!canAutoEnterPip()) {
             return;
         }
         try {
