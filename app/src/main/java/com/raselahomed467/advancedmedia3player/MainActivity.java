@@ -18,6 +18,10 @@ import android.app.PictureInPictureParams;
 import android.content.pm.ActivityInfo;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.ColorFilter;
+import android.graphics.PixelFormat;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
@@ -694,6 +698,8 @@ public class MainActivity extends ComponentActivity {
         playlistWebView.addJavascriptInterface(bridge, "AppInventor");
         webContentContainer.addView(playlistWebView, new FrameLayout.LayoutParams(-1, -1));
 
+        buildDownloadPage(webContentContainer);
+
         inputScroll.addView(webContentContainer, webContainerParams);
 
         // Instantly load cached EventCode.html from local storage if available
@@ -729,7 +735,6 @@ public class MainActivity extends ComponentActivity {
 
         buildSideMenu(mainAppContainer);
         buildSplashScreen(mainAppContainer);
-        buildDownloadPage(mainAppContainer);
 
         setContentView(mainAppContainer);
 
@@ -3821,51 +3826,101 @@ public class MainActivity extends ComponentActivity {
         setStatus("Download started: " + title);
     }
 
+    private Drawable createDownloadsBackArrow() {
+        return new Drawable() {
+            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            {
+                paint.setColor(Color.WHITE);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(2));
+                paint.setStrokeCap(Paint.Cap.ROUND);
+                paint.setStrokeJoin(Paint.Join.ROUND);
+            }
+
+            @Override
+            public void draw(Canvas canvas) {
+                Rect b = getBounds();
+                float cx = b.centerX();
+                float cy = b.centerY();
+                float length = dp(7);
+                float wing = dp(6);
+                canvas.drawLine(cx + length, cy, cx - length, cy, paint);
+                canvas.drawLine(cx - length, cy, cx - length + wing, cy - wing, paint);
+                canvas.drawLine(cx - length, cy, cx - length + wing, cy + wing, paint);
+            }
+
+            @Override
+            public void setAlpha(int alpha) {
+                paint.setAlpha(alpha);
+            }
+
+            @Override
+            public void setColorFilter(ColorFilter colorFilter) {
+                paint.setColorFilter(colorFilter);
+            }
+
+            @Override
+            public int getOpacity() {
+                return PixelFormat.TRANSLUCENT;
+            }
+        };
+    }
+
     private void buildDownloadPage(FrameLayout parent) {
         downloadPageOverlay = new LinearLayout(this);
         downloadPageOverlay.setOrientation(LinearLayout.VERTICAL);
         downloadPageOverlay.setBackgroundColor(BG_COLOR);
         downloadPageOverlay.setClickable(true);
+        downloadPageOverlay.setFocusable(true);
         downloadPageOverlay.setVisibility(View.GONE);
-
-        // Keep the page clear of the status bar, display cutouts and the navigation bar
-        ViewCompat.setOnApplyWindowInsetsListener(downloadPageOverlay, (v, insets) -> {
-            androidx.core.graphics.Insets bars = insets.getInsets(
-                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            return insets;
-        });
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(12), dp(12), dp(16), dp(12));
+        header.setPadding(dp(12), dp(10), dp(14), dp(10));
 
-        TextView back = new TextView(this);
-        back.setText("\u2190");
-        back.setTextColor(Color.WHITE);
-        back.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 22);
-        back.setPadding(dp(8), 0, dp(14), 0);
-        back.setOnClickListener(v -> hideDownloadPage());
-        header.addView(back, new LinearLayout.LayoutParams(-2, -2));
+        FrameLayout backButton = new FrameLayout(this);
+        backButton.setClickable(true);
+        backButton.setFocusable(true);
+        GradientDrawable backBackground = new GradientDrawable();
+        backBackground.setColor(Color.argb(170, 32, 45, 64));
+        backBackground.setCornerRadius(dp(20));
+        backBackground.setStroke(dp(1), Color.argb(55, 255, 255, 255));
+        backButton.setBackground(backBackground);
+
+        ImageView backIcon = new ImageView(this);
+        backIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        backIcon.setImageDrawable(createDownloadsBackArrow());
+        backButton.addView(backIcon, new FrameLayout.LayoutParams(-1, -1));
+        backButton.setOnClickListener(v -> hideDownloadPage());
+        header.addView(backButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
         TextView title = new TextView(this);
-        title.setText("Downloads");
+        title.setText("ডাউনলোড");
         title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
         title.setTypeface(null, Typeface.BOLD);
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        titleParams.leftMargin = dp(12);
+        header.addView(title, titleParams);
 
-        downloadPageOverlay.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        downloadPageOverlay.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setVerticalScrollBarEnabled(false);
+
         downloadListContainer = new LinearLayout(this);
         downloadListContainer.setOrientation(LinearLayout.VERTICAL);
-        downloadListContainer.setPadding(dp(14), dp(4), dp(14), dp(24));
-        scroll.addView(downloadListContainer, new LinearLayout.LayoutParams(-1, -2));
-        downloadPageOverlay.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        downloadListContainer.setPadding(dp(12), dp(6), dp(12), dp(24));
+        scroll.addView(downloadListContainer, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        parent.addView(downloadPageOverlay, new FrameLayout.LayoutParams(-1, -1));
+        downloadPageOverlay.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        parent.addView(downloadPageOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
     private void showDownloadPage() {
@@ -3874,6 +3929,14 @@ public class MainActivity extends ComponentActivity {
                 && playerContainer.getVisibility() == View.VISIBLE) {
             enterInAppMiniPlayer();
         }
+        if (fullscreen) {
+            toggleFullscreen();
+        }
+        if (inputScroll != null) {
+            inputScroll.setVisibility(View.VISIBLE);
+        }
+        if (eventWebView != null) eventWebView.setVisibility(View.GONE);
+        if (playlistWebView != null) playlistWebView.setVisibility(View.GONE);
         refreshDownloadPage();
         downloadPageOverlay.setVisibility(View.VISIBLE);
         downloadTicker.removeCallbacks(downloadTickRunnable);
@@ -3882,8 +3945,12 @@ public class MainActivity extends ComponentActivity {
 
     private void hideDownloadPage() {
         downloadTicker.removeCallbacks(downloadTickRunnable);
-        if (downloadPageOverlay != null) {
-            downloadPageOverlay.setVisibility(View.GONE);
+        if (downloadPageOverlay != null) downloadPageOverlay.setVisibility(View.GONE);
+        if (playlistWebView != null) {
+            playlistWebView.setVisibility(isPlaylistViewActive ? View.VISIBLE : View.GONE);
+        }
+        if (eventWebView != null) {
+            eventWebView.setVisibility(isPlaylistViewActive ? View.GONE : View.VISIBLE);
         }
     }
 
@@ -3915,7 +3982,7 @@ public class MainActivity extends ComponentActivity {
             loading.setTextColor(Color.rgb(170, 185, 205));
             loading.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
             loading.setPadding(dp(4), dp(20), dp(4), dp(20));
-            downloadListContainer.addView(loading, new LinearLayout.LayoutParams(-1, -2));
+            downloadListContainer.addView(loading, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             return;
         }
 
@@ -3923,16 +3990,18 @@ public class MainActivity extends ComponentActivity {
 
         if (items.isEmpty()) {
             TextView empty = new TextView(this);
-            empty.setText("এখনো কোনো ডাউনলোড নেই।\nসিনেমা বা সিরিজ চালানোর সময় উপরের Download বাটনে চাপুন।");
+            empty.setText("এখনো কোনো ডাউনলোড নেই।\nভিডিও চালানোর সময় ডাউনলোড বাটনে চাপুন।");
             empty.setTextColor(Color.rgb(170, 185, 205));
             empty.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
-            empty.setPadding(dp(4), dp(20), dp(4), dp(20));
-            downloadListContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(16), dp(60), dp(16), dp(40));
+            downloadListContainer.addView(empty, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             return;
         }
 
         for (Download d : items) {
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.bottomMargin = dp(10);
             downloadListContainer.addView(buildDownloadRow(d), params);
         }
@@ -3941,6 +4010,8 @@ public class MainActivity extends ComponentActivity {
     private View buildDownloadRow(Download d) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
+        card.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(Color.argb(235, 18, 24, 38));
         cardBg.setCornerRadius(dp(12));
@@ -4020,7 +4091,7 @@ public class MainActivity extends ComponentActivity {
         // Right Meta Container: 1. Title, 2. Status Line
         LinearLayout meta = new LinearLayout(this);
         meta.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(0, -2, 1.0f);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
 
         // ১ আমাদের মুভি টাইটেল
         TextView titleView = new TextView(this);
@@ -4036,7 +4107,7 @@ public class MainActivity extends ComponentActivity {
         TextView statusView = new TextView(this);
         statusView.setText(RasDownloads.statusLineOf(d));
         statusView.setTextColor(d.state == Download.STATE_COMPLETED ? Color.rgb(52, 211, 153) : Color.rgb(56, 189, 248));
-        statusView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11.5f);
+        statusView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12f);
         statusView.setSingleLine(true);
         statusView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         statusView.setPadding(0, dp(4), 0, 0);
@@ -4056,7 +4127,7 @@ public class MainActivity extends ComponentActivity {
         bar.setProgressTintList(android.content.res.ColorStateList.valueOf(barColor));
         bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.argb(35, 255, 255, 255)));
 
-        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, dp(5));
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5));
         barParams.topMargin = dp(10);
         barParams.bottomMargin = dp(10);
         card.addView(bar, barParams);
@@ -4114,7 +4185,7 @@ public class MainActivity extends ComponentActivity {
             bottomRow.addView(stopBtn, new LinearLayout.LayoutParams(0, dp(32), 1.0f));
         }
 
-        card.addView(bottomRow, new LinearLayout.LayoutParams(-1, -2));
+        card.addView(bottomRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return card;
     }
 

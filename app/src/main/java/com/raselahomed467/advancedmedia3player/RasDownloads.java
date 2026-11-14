@@ -541,6 +541,16 @@ public final class RasDownloads {
         return -1;
     }
 
+    public static String formatBytes(long bytes) {
+        if (bytes <= 0) return "0 MB";
+        float mb = bytes / (1024f * 1024f);
+        if (mb >= 1024f) {
+            float gb = mb / 1024f;
+            return String.format(Locale.US, "%.1f GB", gb);
+        }
+        return String.format(Locale.US, "%.1f MB", mb);
+    }
+
     public static String statusLineOf(Download d) {
         long downloaded = d.getBytesDownloaded();
         long total = d.contentLength;
@@ -549,7 +559,7 @@ public final class RasDownloads {
         if (d.state == Download.STATE_COMPLETED) {
             long finalBytes = downloaded > 0 ? downloaded : total;
             if (finalBytes > 0) {
-                return "100% • " + megabytes(finalBytes) + " • ডাউনলোড সম্পন্ন";
+                return "100% • " + formatBytes(finalBytes) + " • ডাউনলোড সম্পন্ন";
             }
             return "100% • ডাউনলোড সম্পন্ন";
         }
@@ -566,7 +576,7 @@ public final class RasDownloads {
             return "অপেক্ষায় আছে...";
         }
 
-        String downStr = megabytes(downloaded);
+        String downStr = formatBytes(downloaded);
         String pctStr = (p >= 0) ? (p + "%") : "";
 
         StringBuilder sb = new StringBuilder();
@@ -581,7 +591,7 @@ public final class RasDownloads {
 
         if (total > 0) {
             if (sb.length() > 0) sb.append(" • ");
-            sb.append(downStr).append(" / ").append(megabytes(total));
+            sb.append(downStr).append(" / ").append(formatBytes(total));
         } else if (downloaded > 0) {
             if (sb.length() > 0) sb.append(" • ");
             sb.append(downStr);
@@ -594,7 +604,7 @@ public final class RasDownloads {
     }
 
     public static String stateLabel(Download d) {
-        String size = megabytes(d.getBytesDownloaded());
+        String size = formatBytes(d.getBytesDownloaded());
         switch (d.state) {
             case Download.STATE_QUEUED:
                 return "অপেক্ষায় আছে...";
@@ -602,7 +612,7 @@ public final class RasDownloads {
                 int p = percentOf(d);
                 if (p >= 0) {
                     if (d.contentLength > 0) {
-                        return "ডাউনলোড হচ্ছে • " + p + "% (" + size + " / " + megabytes(d.contentLength) + ")";
+                        return "ডাউনলোড হচ্ছে • " + p + "% (" + size + " / " + formatBytes(d.contentLength) + ")";
                     }
                     return "ডাউনলোড হচ্ছে • " + p + "% • " + size;
                 }
@@ -627,7 +637,7 @@ public final class RasDownloads {
     }
 
     private static String megabytes(long bytes) {
-        return String.format(Locale.US, "%.1f MB", bytes / (1024f * 1024f));
+        return formatBytes(bytes);
     }
 
     // ------------------------------------------------------------------
