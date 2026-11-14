@@ -152,7 +152,7 @@ public class RasDownloadService extends DownloadService {
                 currentActiveIds.add(notifId);
 
                 NotificationCompat.Builder subBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_stat_rasvibe)
+                        .setSmallIcon(R.drawable.ic_stat_rasvibe_logo)
                         .setContentIntent(openAppIntent())
                         .setOngoing(true)
                         .setOnlyAlertOnce(true)
@@ -202,7 +202,7 @@ public class RasDownloadService extends DownloadService {
 
         // Build the foreground service notification
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_stat_rasvibe)
+                .setSmallIcon(R.drawable.ic_stat_rasvibe_logo)
                 .setContentIntent(openAppIntent())
                 .setOngoing(active > 0)
                 .setOnlyAlertOnce(true)
