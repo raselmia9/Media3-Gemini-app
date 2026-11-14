@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace 'com.raselahomed467.advancedmedia3player'
+    namespace 'com.rasvibe'
     compileSdk 36
 
     defaultConfig {
-        applicationId 'com.raselahomed467.advancedmedia3player'
+        applicationId 'com.rasvibe'
         minSdk 23
         targetSdk 35
         versionCode 1
