@@ -135,6 +135,12 @@ public final class RasDownloads {
                     showCompletedNotification(app, download);
                 }
             }
+
+            @Override
+            public void onDownloadRemoved(DownloadManager downloadManager, Download download) {
+                deleteThumbnail(app, download);
+                deleteLocalVideo(app, download);
+            }
         });
     }
 

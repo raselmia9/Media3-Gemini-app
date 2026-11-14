@@ -3973,20 +3973,33 @@ public class MainActivity extends ComponentActivity {
 
     private void confirmDeleteDownload(Download d) {
         String title = RasDownloads.titleOf(this, d);
-        String actionPrompt = (d.state == Download.STATE_COMPLETED)
-                ? "এই ভিডিও ফাইলটি আপনার ডিভাইস থেকে সম্পূর্ণ মুছে ফেলা হবে।"
-                : "চলমান ডাউনলোডটি বাতিল ও ফাইলটি মুছে ফেলা হবে।";
+        String dialogTitle;
+        String actionPrompt;
+        String positiveText;
+        String negativeText = "বাতিল";
+
+        if (d.state == Download.STATE_COMPLETED) {
+            dialogTitle = "ভিডিওটি মুছে ফেলবেন?";
+            actionPrompt = "এই ভিডিও ফাইলটি আপনার ডিভাইস থেকে সম্পূর্ণ মুছে ফেলা হবে।";
+            positiveText = "মুছে ফেলুন";
+        } else if (d.state == Download.STATE_FAILED) {
+            dialogTitle = "ডাউনলোড বাতিল করবেন?";
+            actionPrompt = "ব্যর্থ ডাউনলোডটি তালিকা থেকে মুছে ফেলা হবে।";
+            positiveText = "মুছে ফেলুন";
+        } else {
+            dialogTitle = "ডাউনলোড বন্ধ করবেন?";
+            actionPrompt = "চলমান ডাউনলোডটি বন্ধ ও ফাইলটি মুছে ফেলা হবে।";
+            positiveText = "হ্যাঁ, বন্ধ করুন";
+        }
 
         android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-        builder.setTitle(d.state == Download.STATE_COMPLETED ? "ভিডিওটি মুছে ফেলবেন?" : "ডাউনলোড বাতিল করবেন?");
-        builder.setMessage(""" + title + ""
-
-" + actionPrompt);
-        builder.setPositiveButton("মুছে ফেলুন", (dialog, which) -> {
+        builder.setTitle(dialogTitle);
+        builder.setMessage("\"" + title + "\"\n\n" + actionPrompt);
+        builder.setPositiveButton(positiveText, (dialog, which) -> {
             RasDownloads.remove(this, d);
             refreshDownloadPage();
         });
-        builder.setNegativeButton("বাতিল", null);
+        builder.setNegativeButton(negativeText, null);
         android.app.AlertDialog dialog = builder.create();
         dialog.show();
         try {
