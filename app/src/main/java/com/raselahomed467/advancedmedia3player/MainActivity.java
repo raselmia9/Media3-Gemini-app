@@ -184,12 +184,14 @@ public class MainActivity extends ComponentActivity {
     private FrameLayout playerContainer;
     private FrameLayout customControlsOverlay;
     private LinearLayout bottomPanel;
+    private LinearLayout buttonsRow;
     private TextView btnPlayPause;
     private ImageView fullscreenButton;
     private SeekBar customSeekBar;
     private TextView timeCurrent;
     private TextView timeDuration;
     private ProgressBar bufferingProgress;
+    private View reloadIconView;
 
     // Splash Screen & Deep Link
     // In-App Miniplayer (Floating PiP inside app)
@@ -431,17 +433,17 @@ public class MainActivity extends ComponentActivity {
         rootLayout.setBackgroundColor(BG_COLOR);
         rootLayout.setFitsSystemWindows(false);
 
-        // Top Bar (Horizontal: App Title / Search Input + Search/Close Toggle Button)
+        // Top Bar (Horizontal: App Title / Search Input + Reload + Search/Close Toggle Button)
         topBarLayout = new LinearLayout(this);
         topBarLayout.setOrientation(LinearLayout.HORIZONTAL);
         topBarLayout.setGravity(Gravity.CENTER_VERTICAL);
-        topBarLayout.setPadding(dp(16), dp(6), dp(16), dp(6));
+        topBarLayout.setPadding(dp(12), dp(2), dp(12), dp(2));
 
         // 0. Side menu button (menu.png) at the far left of the header
         ImageView menuBtn = new ImageView(this);
         menuBtn.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         menuBtn.setColorFilter(Color.WHITE);
-        menuBtn.setPadding(dp(9), dp(9), dp(9), dp(9));
+        menuBtn.setPadding(dp(7), dp(7), dp(7), dp(7));
         int menuResId = getResources().getIdentifier("menu", "drawable", getPackageName());
         if (menuResId != 0) {
             menuBtn.setImageResource(menuResId);
@@ -451,10 +453,10 @@ public class MainActivity extends ComponentActivity {
         menuBtn.setClickable(true);
         GradientDrawable menuBg = new GradientDrawable();
         menuBg.setColor(Color.argb(160, 35, 48, 67));
-        menuBg.setCornerRadius(dp(10));
+        menuBg.setCornerRadius(dp(8));
         menuBtn.setBackground(menuBg);
-        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(dp(40), dp(40));
-        menuParams.rightMargin = dp(10);
+        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(dp(34), dp(34));
+        menuParams.rightMargin = dp(8);
         topBarLayout.addView(menuBtn, menuParams);
         menuBtn.setOnClickListener(v -> openSideMenu());
 
@@ -462,7 +464,7 @@ public class MainActivity extends ComponentActivity {
         titleBar = new TextView(this);
         titleBar.setText("RasVibe");
         titleBar.setTextColor(Color.WHITE);
-        titleBar.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
+        titleBar.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
         titleBar.setGravity(Gravity.CENTER_VERTICAL);
         titleBar.setTypeface(null, android.graphics.Typeface.BOLD);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1f);
@@ -473,19 +475,19 @@ public class MainActivity extends ComponentActivity {
         searchEditText.setHint("Search movies, matches...");
         searchEditText.setHintTextColor(Color.argb(130, 255, 255, 255));
         searchEditText.setTextColor(Color.WHITE);
-        searchEditText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        searchEditText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         searchEditText.setSingleLine(true);
         searchEditText.setVisibility(View.GONE);
 
         GradientDrawable searchBg = new GradientDrawable();
         searchBg.setColor(Color.argb(160, 30, 42, 58));
-        searchBg.setCornerRadius(dp(10));
+        searchBg.setCornerRadius(dp(8));
         searchBg.setStroke(dp(1), Color.argb(50, 255, 255, 255));
         searchEditText.setBackground(searchBg);
-        searchEditText.setPadding(dp(14), 0, dp(14), 0);
+        searchEditText.setPadding(dp(12), 0, dp(12), 0);
 
-        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(0, dp(38), 1f);
-        searchParams.rightMargin = dp(10);
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(0, dp(34), 1f);
+        searchParams.rightMargin = dp(8);
         topBarLayout.addView(searchEditText, searchParams);
 
         // Realtime Web Search as user types
@@ -502,6 +504,39 @@ public class MainActivity extends ComponentActivity {
             public void afterTextChanged(Editable s) {}
         });
 
+        // 2.5 Reload Button (immediately to the left of the search button)
+        FrameLayout reloadBtn = new FrameLayout(this);
+        reloadBtn.setFocusable(true);
+        reloadBtn.setClickable(true);
+        GradientDrawable reloadBg = new GradientDrawable();
+        reloadBg.setColor(Color.argb(160, 35, 48, 67));
+        reloadBg.setCornerRadius(dp(8));
+        reloadBtn.setBackground(reloadBg);
+
+        int reloadResId = getResources().getIdentifier("reload", "drawable", getPackageName());
+        if (reloadResId != 0) {
+            ImageView reloadIcon = new ImageView(this);
+            reloadIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            reloadIcon.setColorFilter(Color.WHITE);
+            reloadIcon.setPadding(dp(7), dp(7), dp(7), dp(7));
+            reloadIcon.setImageResource(reloadResId);
+            reloadBtn.addView(reloadIcon, new FrameLayout.LayoutParams(-1, -1));
+            reloadIconView = reloadIcon;
+        } else {
+            TextView reloadFallback = new TextView(this);
+            reloadFallback.setText("\u21BB");
+            reloadFallback.setTextColor(Color.WHITE);
+            reloadFallback.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            reloadFallback.setGravity(Gravity.CENTER);
+            reloadBtn.addView(reloadFallback, new FrameLayout.LayoutParams(-1, -1));
+            reloadIconView = reloadFallback;
+        }
+        reloadBtn.setContentDescription("Reload Web Content");
+        LinearLayout.LayoutParams reloadParams = new LinearLayout.LayoutParams(dp(34), dp(34));
+        reloadParams.rightMargin = dp(8);
+        topBarLayout.addView(reloadBtn, reloadParams);
+        reloadBtn.setOnClickListener(v -> reloadWebView());
+
         // 3. Search / Close Toggle Button on the far right
         searchToggleBtn = new FrameLayout(this);
         searchToggleBtn.setFocusable(true);
@@ -509,13 +544,13 @@ public class MainActivity extends ComponentActivity {
 
         GradientDrawable toggleBg = new GradientDrawable();
         toggleBg.setColor(Color.argb(160, 35, 48, 67));
-        toggleBg.setCornerRadius(dp(10));
+        toggleBg.setCornerRadius(dp(8));
         searchToggleBtn.setBackground(toggleBg);
 
         searchToggleIcon = new ImageView(this);
         searchToggleIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         searchToggleIcon.setColorFilter(Color.WHITE);
-        searchToggleIcon.setPadding(dp(9), dp(9), dp(9), dp(9));
+        searchToggleIcon.setPadding(dp(7), dp(7), dp(7), dp(7));
         int searchResId = getResources().getIdentifier("search", "drawable", getPackageName());
         if (searchResId != 0) {
             searchToggleIcon.setImageResource(searchResId);
@@ -525,17 +560,17 @@ public class MainActivity extends ComponentActivity {
         searchToggleClose = new TextView(this);
         searchToggleClose.setText("\u2715");
         searchToggleClose.setTextColor(Color.WHITE);
-        searchToggleClose.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+        searchToggleClose.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         searchToggleClose.setGravity(Gravity.CENTER);
         searchToggleClose.setVisibility(View.GONE);
         searchToggleBtn.addView(searchToggleClose, new FrameLayout.LayoutParams(-1, -1));
 
-        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(34), dp(34));
         topBarLayout.addView(searchToggleBtn, toggleParams);
 
         searchToggleBtn.setOnClickListener(v -> toggleSearch());
 
-        rootLayout.addView(topBarLayout, new LinearLayout.LayoutParams(-1, dp(52)));
+        rootLayout.addView(topBarLayout, new LinearLayout.LayoutParams(-1, dp(42)));
 
         // Player Container (Initially hidden until a video link is selected)
         playerContainer = new FrameLayout(this);
@@ -579,7 +614,7 @@ public class MainActivity extends ComponentActivity {
         buildGestureHud();
         playerContainer.addView(gestureHudCard, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
 
-        rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.30f));
+        rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.25f));
 
         // Bottom Section: URL input + Play button + Web content
         inputScroll = new LinearLayout(this);
@@ -683,7 +718,7 @@ public class MainActivity extends ComponentActivity {
         // Fetch and update templates in background during splash screen
         preloadHtmlTemplates();
 
-        rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.70f));
+        rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.75f));
 
         mainAppContainer = new FrameLayout(this);
         mainAppContainer.setLayoutParams(new ViewGroup.LayoutParams(
@@ -778,7 +813,7 @@ public class MainActivity extends ComponentActivity {
         // ------------------------------------------
         // ROW 1: BUTTONS ROW (ALL HORIZONTAL)
         // ------------------------------------------
-        LinearLayout buttonsRow = new LinearLayout(this);
+        buttonsRow = new LinearLayout(this);
         buttonsRow.setOrientation(LinearLayout.HORIZONTAL);
         buttonsRow.setGravity(Gravity.CENTER);
         buttonsRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
@@ -868,6 +903,7 @@ public class MainActivity extends ComponentActivity {
         });
 
         bottomPanel.addView(timelineRow);
+        updateControllerLayoutSizes(fullscreen);
     }
 
     private TextView addControllerButton(
@@ -1601,7 +1637,7 @@ public class MainActivity extends ComponentActivity {
             updatePipParams();
         }
         if (inputScroll != null && !isMiniPlayerActive) {
-            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.70f));
+            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.75f));
         }
 
         try {
@@ -2077,14 +2113,20 @@ public class MainActivity extends ComponentActivity {
             applyFullscreenSystemUi(false);
             if (topBarLayout != null) topBarLayout.setVisibility(View.VISIBLE);
             inputScroll.setVisibility(View.VISIBLE);
+            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    0.75f
+            ));
             playerContainer.setLayoutParams(new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0,
-                    0.30f
+                    0.25f
             ));
             setStatus("Normal Mode");
         }
         updateFullscreenButton();
+        updateControllerLayoutSizes(fullscreen);
     }
 
     private void applyFullscreenSystemUi(boolean isFull) {
@@ -2160,6 +2202,79 @@ public class MainActivity extends ComponentActivity {
             }
             fullscreenButton.setContentDescription(fullscreen ? "Exit fullscreen" : "Enter fullscreen");
         }
+    }
+
+    private void updateControllerLayoutSizes(boolean isFullscreen) {
+        if (bottomPanel == null || buttonsRow == null) return;
+
+        int btnW = isFullscreen ? dp(42) : dp(34);
+        int btnH = isFullscreen ? dp(40) : dp(32);
+        int iconPad = isFullscreen ? dp(8) : dp(6);
+        int corner = isFullscreen ? dp(12) : dp(9);
+
+        if (isFullscreen) {
+            bottomPanel.setPadding(dp(12), dp(10), dp(12), dp(8));
+        } else {
+            bottomPanel.setPadding(dp(8), dp(4), dp(8), dp(4));
+        }
+
+        for (int i = 0; i < buttonsRow.getChildCount(); i++) {
+            View child = buttonsRow.getChildAt(i);
+            ViewGroup.LayoutParams lp = child.getLayoutParams();
+            if (lp instanceof LinearLayout.LayoutParams) {
+                LinearLayout.LayoutParams llp = (LinearLayout.LayoutParams) lp;
+                llp.width = btnW;
+                llp.height = btnH;
+                llp.leftMargin = dp(2);
+                llp.rightMargin = dp(2);
+                child.setLayoutParams(llp);
+            }
+            if (child instanceof ImageView) {
+                child.setPadding(iconPad, iconPad, iconPad, iconPad);
+            } else if (child instanceof TextView) {
+                TextView tv = (TextView) child;
+                if (tv == btnPlayPause) {
+                    tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, isFullscreen ? 21 : 17);
+                } else {
+                    tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, isFullscreen ? 18 : 14);
+                }
+            }
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.argb(180, 35, 48, 67));
+            bg.setCornerRadius(corner);
+            child.setBackground(bg);
+        }
+
+        if (timeCurrent != null) {
+            timeCurrent.setTextSize(TypedValue.COMPLEX_UNIT_DIP, isFullscreen ? 12 : 10);
+        }
+        if (timeDuration != null) {
+            timeDuration.setTextSize(TypedValue.COMPLEX_UNIT_DIP, isFullscreen ? 12 : 10);
+        }
+        if (customSeekBar != null) {
+            ViewGroup.LayoutParams lp = customSeekBar.getLayoutParams();
+            if (lp instanceof LinearLayout.LayoutParams) {
+                LinearLayout.LayoutParams seekParams = (LinearLayout.LayoutParams) lp;
+                seekParams.leftMargin = isFullscreen ? dp(8) : dp(4);
+                seekParams.rightMargin = isFullscreen ? dp(8) : dp(4);
+                customSeekBar.setLayoutParams(seekParams);
+            }
+        }
+        if (topDownloadButton != null) {
+            if (isFullscreen) {
+                topDownloadButton.setPadding(dp(14), dp(7), dp(14), dp(7));
+                topDownloadButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+            } else {
+                topDownloadButton.setPadding(dp(10), dp(4), dp(10), dp(4));
+                topDownloadButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
+            }
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        updateControllerLayoutSizes(fullscreen);
     }
 
     // ==========================================
@@ -2485,6 +2600,10 @@ public class MainActivity extends ComponentActivity {
 
     private void openSideMenu() {
         if (sideMenuOverlay == null || sideMenuPanel == null) return;
+        if (!isMiniPlayerActive && player != null && playerContainer != null
+                && playerContainer.getVisibility() == View.VISIBLE) {
+            enterInAppMiniPlayer();
+        }
         refreshSideMenuValues();
         sideMenuOverlay.setVisibility(View.VISIBLE);
         sideMenuPanel.animate().translationX(0).setDuration(200).start();
@@ -2804,7 +2923,7 @@ public class MainActivity extends ComponentActivity {
 
         // Re-attach into rootLayout at index 1 (between topBarLayout and inputScroll)
         LinearLayout.LayoutParams normalParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.30f
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.25f
         );
         playerContainer.setLayoutParams(normalParams);
 
@@ -2816,10 +2935,11 @@ public class MainActivity extends ComponentActivity {
         }
         rootLayout.addView(playerContainer, targetIndex, normalParams);
 
-        // Restore inputScroll weight to 0.70f
+        // Restore inputScroll weight to 0.75f
         if (inputScroll != null) {
-            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.70f));
+            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.75f));
         }
+        updateControllerLayoutSizes(fullscreen);
 
         if (customControlsOverlay != null) {
             customControlsOverlay.setVisibility(View.VISIBLE);
@@ -2860,7 +2980,7 @@ public class MainActivity extends ComponentActivity {
 
             // Put back into rootLayout hidden so view hierarchy is consistent
             LinearLayout.LayoutParams normalParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.30f
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.25f
             );
             int targetIndex = Math.min(1, rootLayout.getChildCount());
             rootLayout.addView(playerContainer, targetIndex, normalParams);
@@ -2970,6 +3090,8 @@ public class MainActivity extends ComponentActivity {
             }
 
             // Immediately hide everything except video view
+            if (sideMenuOverlay != null) sideMenuOverlay.setVisibility(View.GONE);
+            if (downloadPageOverlay != null) downloadPageOverlay.setVisibility(View.GONE);
             if (splashLayout != null) splashLayout.setVisibility(View.GONE);
             if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
             if (inputScroll != null) inputScroll.setVisibility(View.GONE);
@@ -3060,12 +3182,12 @@ public class MainActivity extends ComponentActivity {
             if (inputScroll != null) {
                 inputScroll.setVisibility(View.VISIBLE);
                 inputScroll.setLayoutParams(new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.70f));
+                        ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.75f));
             }
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0,
-                    0.30f
+                    0.25f
             );
             playerContainer.setLayoutParams(lp);
             applyFullscreenSystemUi(false);
@@ -3075,6 +3197,7 @@ public class MainActivity extends ComponentActivity {
         }
         showControls();
         updateFullscreenButton();
+        updateControllerLayoutSizes(fullscreen);
     }
 
     @Override
@@ -3085,6 +3208,8 @@ public class MainActivity extends ComponentActivity {
             wasFullscreenBeforePip = fullscreen;
             applyFillResizeMode();
 
+            if (sideMenuOverlay != null) sideMenuOverlay.setVisibility(View.GONE);
+            if (downloadPageOverlay != null) downloadPageOverlay.setVisibility(View.GONE);
             if (splashLayout != null) splashLayout.setVisibility(View.GONE);
             if (topBarLayout != null) topBarLayout.setVisibility(View.GONE);
             if (inputScroll != null) inputScroll.setVisibility(View.GONE);
@@ -3112,6 +3237,9 @@ public class MainActivity extends ComponentActivity {
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
+        if (sideMenuOverlay != null && sideMenuOverlay.getVisibility() == View.VISIBLE) {
+            sideMenuOverlay.setVisibility(View.GONE);
+        }
         // Auto-enter PiP when Home button/gesture is pressed while video is playing (Android 8.0+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             updatePipParams();
@@ -3402,6 +3530,21 @@ public class MainActivity extends ComponentActivity {
             applySearchToggleIcon(false);
         }
         filterWebView("");
+    }
+
+    private void reloadWebView() {
+        toast("Reloading web content...");
+        if (reloadIconView != null) {
+            reloadIconView.animate().rotationBy(360f).setDuration(450).start();
+        }
+        if (isPlaylistViewActive && playlistWebView != null) {
+            playlistWebView.reload();
+        } else {
+            if (eventWebView != null) {
+                eventWebView.reload();
+            }
+            preloadHtmlTemplates();
+        }
     }
 
     private void configureWebViewSettings(WebView wv) {
@@ -3727,6 +3870,10 @@ public class MainActivity extends ComponentActivity {
 
     private void showDownloadPage() {
         if (downloadPageOverlay == null) return;
+        if (!isMiniPlayerActive && player != null && playerContainer != null
+                && playerContainer.getVisibility() == View.VISIBLE) {
+            enterInAppMiniPlayer();
+        }
         refreshDownloadPage();
         downloadPageOverlay.setVisibility(View.VISIBLE);
         downloadTicker.removeCallbacks(downloadTickRunnable);
@@ -4064,7 +4211,7 @@ public class MainActivity extends ComponentActivity {
             updatePipParams();
         }
         if (inputScroll != null && !isMiniPlayerActive) {
-            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.70f));
+            inputScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 0.75f));
         }
 
         try {
@@ -4324,6 +4471,9 @@ public class MainActivity extends ComponentActivity {
         if (intent == null) return;
         if (intent.getBooleanExtra("open_downloads", false)) {
             dismissSplashScreen();
+            if (sideMenuOverlay != null && sideMenuOverlay.getVisibility() == View.VISIBLE) {
+                closeSideMenu();
+            }
             runOnUiThread(this::showDownloadPage);
             return;
         }
