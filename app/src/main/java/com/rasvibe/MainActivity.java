@@ -110,6 +110,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Collections;
+import java.util.HashMap;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 
 @UnstableApi
 public class MainActivity extends ComponentActivity {
@@ -3586,6 +3595,169 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
+
+    // ---- Local image cache for WebView (posters / thumbnails) ----
+    private static final String IMG_CACHE_DIR_NAME = "web_img_cache";
+    private static final long IMG_CACHE_MAX_BYTES = 150L * 1024 * 1024;
+    private static final Object IMG_CACHE_LOCK = new Object();
+    private OkHttpClient imageHttpClient;
+
+    private OkHttpClient getImageHttpClient() {
+        if (imageHttpClient == null) {
+            imageHttpClient = new OkHttpClient.Builder()
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(20, TimeUnit.SECONDS)
+                    .build();
+        }
+        return imageHttpClient;
+    }
+
+    private boolean isImageRequest(WebResourceRequest request) {
+        if (request == null || request.isForMainFrame()) return false;
+        if (!"GET".equalsIgnoreCase(request.getMethod())) return false;
+        Map<String, String> headers = request.getRequestHeaders();
+        if (headers != null) {
+            for (Map.Entry<String, String> e : headers.entrySet()) {
+                if (e.getKey() != null && e.getKey().equalsIgnoreCase("Accept")
+                        && e.getValue() != null
+                        && e.getValue().toLowerCase(Locale.US).contains("image/")) {
+                    return true;
+                }
+            }
+        }
+        if (request.getUrl() == null || request.getUrl().getPath() == null) return false;
+        String p = request.getUrl().getPath().toLowerCase(Locale.US);
+        return p.endsWith(".jpg") || p.endsWith(".jpeg") || p.endsWith(".png")
+                || p.endsWith(".webp") || p.endsWith(".gif") || p.endsWith(".bmp");
+    }
+
+    private WebResourceResponse getCachedOrFetchImage(WebResourceRequest request) {
+        String url = request.getUrl().toString();
+        String key = sha256Hex(url);
+        if (key == null) return null;
+        File dir = new File(getCacheDir(), IMG_CACHE_DIR_NAME);
+
+        // 1. Serve from local cache if already stored
+        synchronized (IMG_CACHE_LOCK) {
+            if (!dir.exists()) dir.mkdirs();
+            File dataFile = new File(dir, key + ".bin");
+            File mimeFile = new File(dir, key + ".mime");
+            if (dataFile.exists() && dataFile.length() > 0) {
+                try {
+                    dataFile.setLastModified(System.currentTimeMillis());
+                    String mime = readSmallText(mimeFile, "image/*");
+                    return imageResponse(mime, new FileInputStream(dataFile));
+                } catch (IOException ignored) {
+                    // fall through to network
+                }
+            }
+        }
+
+        // 2. Not cached yet: download once, store, then serve
+        try {
+            Request.Builder rb = new Request.Builder().url(url).get();
+            Map<String, String> headers = request.getRequestHeaders();
+            if (headers != null) {
+                for (Map.Entry<String, String> e : headers.entrySet()) {
+                    String k = e.getKey();
+                    if (k == null) continue;
+                    if (k.equalsIgnoreCase("User-Agent") || k.equalsIgnoreCase("Referer")
+                            || k.equalsIgnoreCase("Accept")) {
+                        rb.header(k, e.getValue() != null ? e.getValue() : "");
+                    }
+                }
+            }
+            try (Response resp = getImageHttpClient().newCall(rb.build()).execute()) {
+                if (!resp.isSuccessful() || resp.body() == null) return null;
+                String mime = resp.header("Content-Type", "image/*");
+                mime = (mime != null) ? mime.split(";")[0].trim() : "image/*";
+                if (!mime.startsWith("image/")) return null;
+                byte[] bytes = resp.body().bytes();
+                if (bytes.length == 0) return null;
+                synchronized (IMG_CACHE_LOCK) {
+                    if (!dir.exists()) dir.mkdirs();
+                    writeBytes(new File(dir, key + ".bin"), bytes);
+                    writeText(new File(dir, key + ".mime"), mime);
+                    trimImageCache(dir);
+                }
+                return imageResponse(mime, new ByteArrayInputStream(bytes));
+            }
+        } catch (IOException e) {
+            return null; // let WebView load it the normal way
+        }
+    }
+
+    private WebResourceResponse imageResponse(String mime, InputStream in) {
+        Map<String, String> h = new HashMap<>();
+        h.put("Access-Control-Allow-Origin", "*");
+        h.put("Cache-Control", "max-age=31536000");
+        return new WebResourceResponse(mime, null, 200, "OK", h, in);
+    }
+
+    private void trimImageCache(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        List<File> bins = new ArrayList<>();
+        long total = 0;
+        for (File f : files) {
+            if (f.getName().endsWith(".bin")) {
+                bins.add(f);
+                total += f.length();
+            }
+        }
+        if (total <= IMG_CACHE_MAX_BYTES) return;
+        Collections.sort(bins, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        for (File f : bins) {
+            if (total <= IMG_CACHE_MAX_BYTES) break;
+            long len = f.length();
+            if (f.delete()) {
+                total -= len;
+                new File(dir, f.getName().replace(".bin", ".mime")).delete();
+            }
+        }
+    }
+
+    private static String sha256Hex(String s) {
+        try {
+            byte[] d = MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : d) sb.append(String.format(Locale.US, "%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void writeBytes(File target, byte[] bytes) throws IOException {
+        File tmp = new File(target.getParentFile(), target.getName() + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
+            out.write(bytes);
+        }
+        if (target.exists()) target.delete();
+        if (!tmp.renameTo(target)) throw new IOException("Could not store cache file");
+    }
+
+    private static void writeText(File target, String text) throws IOException {
+        writeBytes(target, text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String readSmallText(File f, String fallback) {
+        if (!f.exists()) return fallback;
+        try (FileInputStream in = new FileInputStream(f)) {
+            byte[] b = new byte[(int) f.length()];
+            int read = 0;
+            while (read < b.length) {
+                int n = in.read(b, read, b.length - read);
+                if (n < 0) break;
+                read += n;
+            }
+            String s = new String(b, 0, read, StandardCharsets.UTF_8).trim();
+            return s.isEmpty() ? fallback : s;
+        } catch (IOException e) {
+            return fallback;
+        }
+    }
+
     private void configureWebViewSettings(WebView wv) {
         WebSettings s = wv.getSettings();
         s.setJavaScriptEnabled(true);
@@ -3605,6 +3777,15 @@ public class MainActivity extends ComponentActivity {
         wv.setBackgroundColor(Color.rgb(13, 17, 23));
         wv.setWebChromeClient(new WebChromeClient());
         wv.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (isImageRequest(request)) {
+                    WebResourceResponse cached = getCachedOrFetchImage(request);
+                    if (cached != null) return cached;
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
