@@ -845,6 +845,9 @@ public class MainActivity extends ComponentActivity {
         // 7. Download (movies & series only, hidden for everything else) - right end of the row
         downloadControlButton = addControllerIconButton(buttonsRow, "ic_download", "⬇", "Download", this::startDownloadForCurrentStream);
         downloadControlButton.setVisibility(View.GONE);
+        // Keep the download button at the far left of the row
+        buttonsRow.removeView(downloadControlButton);
+        buttonsRow.addView(downloadControlButton, 0);
 
         bottomPanel.addView(buttonsRow);
 
@@ -4002,7 +4005,14 @@ public class MainActivity extends ComponentActivity {
         if (currentConfig == null || metaVideoUrl.isEmpty()) return false;
         if (currentMovieTitle == null || currentMovieTitle.trim().isEmpty()) return false;
         if (currentMovieThumbnailUrl == null || currentMovieThumbnailUrl.trim().isEmpty()) return false;
-        return metaVideoUrl.equals(currentConfig.url.trim());
+        // Links may carry headers after '|' (e.g. |Referer=...); compare only the base URL
+        return baseUrlOf(metaVideoUrl).equals(currentConfig.url.trim());
+    }
+
+    private static String baseUrlOf(String raw) {
+        if (raw == null) return "";
+        int pipe = raw.indexOf('|');
+        return (pipe >= 0 ? raw.substring(0, pipe) : raw).trim();
     }
 
     // Downloadable = movie/series (see above), on-demand (not live), not DRM protected, not offline playback
@@ -4288,7 +4298,7 @@ public class MainActivity extends ComponentActivity {
             badge.setText("OFFLINE");
             badgeBg.setColor(Color.argb(210, 16, 185, 129));
         } else if (d.state == Download.STATE_DOWNLOADING) {
-            badge.setText(p >= 0 ? (p + "%") : "DL");
+            badge.setText(RasDownloads.speedText(d));
             badgeBg.setColor(Color.argb(210, 14, 165, 233));
         } else if (d.state == Download.STATE_FAILED) {
             badge.setText("ERROR");
