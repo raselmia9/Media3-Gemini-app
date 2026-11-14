@@ -541,6 +541,48 @@ public final class RasDownloads {
         return -1;
     }
 
+    // ---- Live download speed (Media3 does not report speed, so we measure it) ----
+    private static final Map<String, long[]> speedSamples = new HashMap<>(); // id -> {bytes, timeMs}
+    private static final Map<String, Float> speedBytesPerSec = new HashMap<>();
+
+    // Smoothed download speed in bytes per second for a downloading item; 0 when unknown
+    public static synchronized float speedOf(Download d) {
+        String id = d.request.id;
+        if (d.state != Download.STATE_DOWNLOADING) {
+            speedSamples.remove(id);
+            speedBytesPerSec.remove(id);
+            return 0f;
+        }
+        long bytes = d.getBytesDownloaded();
+        long now = System.currentTimeMillis();
+        long[] last = speedSamples.get(id);
+        if (last == null) {
+            speedSamples.put(id, new long[]{bytes, now});
+            return 0f;
+        }
+        long dt = now - last[1];
+        if (dt < 700) {
+            Float cached = speedBytesPerSec.get(id);
+            return cached != null ? cached : 0f;
+        }
+        float instant = bytes >= last[0] ? (bytes - last[0]) * 1000f / dt : 0f;
+        Float prev = speedBytesPerSec.get(id);
+        float smoothed = (prev == null || prev <= 0f) ? instant : (prev * 0.6f + instant * 0.4f);
+        speedBytesPerSec.put(id, smoothed);
+        speedSamples.put(id, new long[]{bytes, now});
+        return smoothed;
+    }
+
+    // Short label for the thumbnail badge, e.g. "850 KB/s" or "2.4 MB/s"
+    public static String speedText(Download d) {
+        float bps = speedOf(d);
+        if (bps < 1024f) return "শুরু...";
+        if (bps < 1024f * 1024f) {
+            return String.format(Locale.US, "%.0f KB/s", bps / 1024f);
+        }
+        return String.format(Locale.US, "%.1f MB/s", bps / (1024f * 1024f));
+    }
+
     public static String formatBytes(long bytes) {
         if (bytes <= 0) return "0 MB";
         float mb = bytes / (1024f * 1024f);
