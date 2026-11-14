@@ -480,7 +480,7 @@ public final class RasDownloads {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
             NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_stat_rasvibe)
+                    .setSmallIcon(R.drawable.ic_stat_rasvibe_logo)
                     .setContentTitle("ডাউনলোড সম্পন্ন: " + title)
                     .setContentText("প্লে করতে ট্যাপ করুন")
                     .setAutoCancel(true)
