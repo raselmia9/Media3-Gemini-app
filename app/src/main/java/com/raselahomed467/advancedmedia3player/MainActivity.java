@@ -298,6 +298,7 @@ public class MainActivity extends ComponentActivity {
 
     private static final int BG_COLOR = Color.rgb(18, 24, 38);
     private static final int PRIMARY_COLOR = Color.rgb(41, 128, 255);
+    private static final int SEEK_GOLD_COLOR = Color.rgb(255, 193, 7);
     private static final int BUTTON_COLOR = Color.rgb(33, 44, 61);
 
     private int dp(int value) {
@@ -524,12 +525,12 @@ public class MainActivity extends ComponentActivity {
         reloadBg.setCornerRadius(dp(8));
         reloadBtn.setBackground(reloadBg);
 
-        int reloadResId = getResources().getIdentifier("reload", "drawable", getPackageName());
+        int reloadResId = getResources().getIdentifier("ic_refresh", "drawable", getPackageName());
         if (reloadResId != 0) {
             ImageView reloadIcon = new ImageView(this);
-            reloadIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            reloadIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
             reloadIcon.setColorFilter(Color.WHITE);
-            reloadIcon.setPadding(dp(7), dp(7), dp(7), dp(7));
+            reloadIcon.setPadding(dp(8), dp(8), dp(8), dp(8));
             reloadIcon.setImageResource(reloadResId);
             reloadBtn.addView(reloadIcon, new FrameLayout.LayoutParams(-1, -1));
             reloadIconView = reloadIcon;
@@ -876,7 +877,7 @@ public class MainActivity extends ComponentActivity {
         customSeekBar.setMax(100);
         customSeekBar.setProgress(0);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            customSeekBar.setProgressTintList(ColorStateList.valueOf(PRIMARY_COLOR));
+            customSeekBar.setProgressTintList(ColorStateList.valueOf(SEEK_GOLD_COLOR));
             customSeekBar.setThumbTintList(ColorStateList.valueOf(Color.WHITE));
             customSeekBar.setSecondaryProgressTintList(ColorStateList.valueOf(Color.argb(120, 255, 255, 255)));
             customSeekBar.setProgressBackgroundTintList(ColorStateList.valueOf(Color.argb(60, 255, 255, 255)));
@@ -3596,7 +3597,6 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void reloadWebView() {
-        toast("Reloading web content...");
         if (reloadIconView != null) {
             reloadIconView.animate().rotationBy(360f).setDuration(450).start();
         }
