@@ -136,6 +136,11 @@ public class MainActivity extends ComponentActivity {
     private FrameLayout sideMenuOverlay;
     private LinearLayout sideMenuPanel;
     private TextView menuDisplayValue, menuPipValue, menuSpeedValue;
+    private TextView menuSeekValue, menuHideValue, menuKeepOnValue;
+    private int seekStepMs = 10000;          // Rewind/Forward step (10s or 30s)
+    private int autoHideDelayMs = 4000;      // Controls auto-hide delay
+    private boolean keepScreenOn = false;
+    private boolean downloadPageWasVisibleBeforePip = false;
 
     // ===== Downloads (movies & series only) =====
     private ImageView downloadControlButton;
@@ -1309,7 +1314,7 @@ public class MainActivity extends ComponentActivity {
     private void resetAutoHide() {
         handler.removeCallbacks(autoHideRunnable);
         if (isControlsVisible && !isInPipMode()) {
-            handler.postDelayed(autoHideRunnable, 4000);
+            handler.postDelayed(autoHideRunnable, autoHideDelayMs);
         }
     }
 
@@ -1326,7 +1331,7 @@ public class MainActivity extends ComponentActivity {
 
     private void rewind10s() {
         if (player == null) return;
-        long pos = Math.max(0, player.getCurrentPosition() - 10000);
+        long pos = Math.max(0, player.getCurrentPosition() - seekStepMs);
         player.seekTo(pos);
         updateSeekViews(pos);
     }
@@ -1334,7 +1339,7 @@ public class MainActivity extends ComponentActivity {
     private void forward10s() {
         if (player == null) return;
         long dur = player.getDuration();
-        long pos = player.getCurrentPosition() + 10000;
+        long pos = player.getCurrentPosition() + seekStepMs;
         if (dur > 0 && pos > dur) pos = dur;
         player.seekTo(pos);
         updateSeekViews(pos);
@@ -2562,6 +2567,19 @@ public class MainActivity extends ComponentActivity {
         header.setPadding(0, 0, 0, dp(20));
         sideMenuPanel.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
+        addSideMenuRow("Downloads", () -> {
+            closeSideMenu();
+            showDownloadPage();
+        });
+
+        TextView videoSection = new TextView(this);
+        videoSection.setText("ভিডিও সেটিং");
+        videoSection.setTextColor(Color.rgb(250, 204, 21));
+        videoSection.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        videoSection.setTypeface(null, Typeface.BOLD);
+        videoSection.setPadding(dp(4), dp(18), 0, dp(8));
+        sideMenuPanel.addView(videoSection, new LinearLayout.LayoutParams(-1, -2));
+
         menuDisplayValue = addSideMenuRow("Video display", () -> {
             cycleResizeMode();
             refreshSideMenuValues();
@@ -2577,12 +2595,21 @@ public class MainActivity extends ComponentActivity {
             }
             refreshSideMenuValues();
         });
-
-        // Spacer pushes the Downloads row to the bottom of the side menu
-        sideMenuPanel.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1f));
-        addSideMenuRow("Downloads", () -> {
-            closeSideMenu();
-            showDownloadPage();
+        menuSeekValue = addSideMenuRow("Seek step (rewind/forward)", () -> {
+            seekStepMs = (seekStepMs == 10000) ? 30000 : 10000;
+            refreshSideMenuValues();
+        });
+        menuHideValue = addSideMenuRow("Controls hide after", () -> {
+            if (autoHideDelayMs == 4000) autoHideDelayMs = 6000;
+            else if (autoHideDelayMs == 6000) autoHideDelayMs = 10000;
+            else autoHideDelayMs = 4000;
+            resetAutoHide();
+            refreshSideMenuValues();
+        });
+        menuKeepOnValue = addSideMenuRow("Keep screen on while playing", () -> {
+            keepScreenOn = !keepScreenOn;
+            applyKeepScreenOn();
+            refreshSideMenuValues();
         });
 
         sideMenuOverlay.addView(sideMenuPanel, new FrameLayout.LayoutParams(dp(270), -1, Gravity.START));
@@ -2626,6 +2653,29 @@ public class MainActivity extends ComponentActivity {
         if (menuDisplayValue != null) menuDisplayValue.setText(resizeModeName());
         if (menuPipValue != null) menuPipValue.setText(autoPipEnabled ? "On" : "Off");
         if (menuSpeedValue != null) menuSpeedValue.setText(speedButtonVisible ? "On" : "Off");
+        if (menuSeekValue != null) menuSeekValue.setText((seekStepMs / 1000) + "s");
+        if (menuHideValue != null) menuHideValue.setText((autoHideDelayMs / 1000) + "s");
+        if (menuKeepOnValue != null) menuKeepOnValue.setText(keepScreenOn ? "On" : "Off");
+    }
+
+    private void applyKeepScreenOn() {
+        if (playerView != null) playerView.setKeepScreenOn(keepScreenOn);
+    }
+
+    private boolean isDownloadPageShowing() {
+        return downloadPageOverlay != null && downloadPageOverlay.getVisibility() == View.VISIBLE;
+    }
+
+    // Brings the Downloads page back after leaving PiP, so it does not turn into a blank screen
+    private void restoreDownloadPageAfterPip() {
+        if (!downloadPageWasVisibleBeforePip) return;
+        downloadPageWasVisibleBeforePip = false;
+        if (fullscreen || downloadPageOverlay == null) return;
+        if (inputScroll != null) inputScroll.setVisibility(View.VISIBLE);
+        downloadPageOverlay.setVisibility(View.VISIBLE);
+        refreshDownloadPage();
+        downloadTicker.removeCallbacks(downloadTickRunnable);
+        downloadTicker.post(downloadTickRunnable);
     }
 
     private String resizeModeName() {
@@ -3129,6 +3179,7 @@ public class MainActivity extends ComponentActivity {
         try {
             wasMiniPlayerBeforePip = isMiniPlayerActive;
             wasFullscreenBeforePip = fullscreen;
+            downloadPageWasVisibleBeforePip |= isDownloadPageShowing();
             applyFillResizeMode();
 
             // Reset orientation so PiP transitions cleanly
@@ -3256,6 +3307,7 @@ public class MainActivity extends ComponentActivity {
         if (isInPictureInPictureMode) {
             wasMiniPlayerBeforePip = isMiniPlayerActive;
             wasFullscreenBeforePip = fullscreen;
+            downloadPageWasVisibleBeforePip |= isDownloadPageShowing();
             applyFillResizeMode();
 
             if (sideMenuOverlay != null) sideMenuOverlay.setVisibility(View.GONE);
@@ -3281,6 +3333,7 @@ public class MainActivity extends ComponentActivity {
         } else {
             // Restored from PiP
             restoreLayoutFromPip();
+            restoreDownloadPageAfterPip();
         }
     }
 
@@ -4504,7 +4557,7 @@ public class MainActivity extends ComponentActivity {
 
     private void playOfflineDownload(Download d) {
         if (player == null) return;
-        hideDownloadPage();
+        // The Downloads page stays open; only the player is shown above it
 
         if (isMiniPlayerActive) {
             exitInAppMiniPlayer();
