@@ -344,6 +344,11 @@ public class MainActivity extends ComponentActivity {
             getWindow().setAttributes(cutoutAttrs);
         }
 
+        int initialFlags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+        getWindow().getDecorView().setSystemUiVisibility(initialFlags);
+
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
 
@@ -727,6 +732,7 @@ public class MainActivity extends ComponentActivity {
         rootLayout.addView(inputScroll, new LinearLayout.LayoutParams(-1, 0, 0.75f));
 
         mainAppContainer = new FrameLayout(this);
+        mainAppContainer.setFitsSystemWindows(false);
         mainAppContainer.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -2139,7 +2145,9 @@ public class MainActivity extends ComponentActivity {
             if (rootLayout != null) {
                 rootLayout.setFitsSystemWindows(false);
                 if (isFull) rootLayout.setPadding(0, 0, 0, 0);
-                if (mainAppContainer != null) ViewCompat.requestApplyInsets(mainAppContainer);
+            }
+            if (mainAppContainer != null) {
+                mainAppContainer.setFitsSystemWindows(false);
             }
             WindowInsetsControllerCompat controller =
                     new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
@@ -2163,6 +2171,11 @@ public class MainActivity extends ComponentActivity {
                 getWindow().setStatusBarColor(Color.TRANSPARENT);
                 getWindow().setNavigationBarColor(Color.TRANSPARENT);
 
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    getWindow().setNavigationBarContrastEnforced(false);
+                    getWindow().setStatusBarContrastEnforced(false);
+                }
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     WindowManager.LayoutParams attrs = getWindow().getAttributes();
                     attrs.layoutInDisplayCutoutMode =
@@ -2170,28 +2183,55 @@ public class MainActivity extends ComponentActivity {
                     getWindow().setAttributes(attrs);
                 }
             } else {
-                // Restore Status Bar and Navigation Bar
+                // Normal mode: restore system bars while strictly keeping edge-to-edge layout & transparent navigation bar
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
                 controller.show(WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.navigationBars());
 
-                getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+                int normalFlags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+                getWindow().getDecorView().setSystemUiVisibility(normalFlags);
+
                 getWindow().setStatusBarColor(Color.TRANSPARENT);
                 getWindow().setNavigationBarColor(Color.TRANSPARENT);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    getWindow().setNavigationBarContrastEnforced(false);
+                    getWindow().setStatusBarContrastEnforced(false);
+                }
+
+                controller.setAppearanceLightStatusBars(false);
+                controller.setAppearanceLightNavigationBars(false);
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     WindowManager.LayoutParams attrs = getWindow().getAttributes();
                     attrs.layoutInDisplayCutoutMode =
-                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
                     getWindow().setAttributes(attrs);
+                }
+
+                if (mainAppContainer != null) {
+                    ViewCompat.requestApplyInsets(mainAppContainer);
                 }
             }
         } catch (Exception ignored) {}
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (fullscreen && !isInPipMode()) {
+            applyFullscreenSystemUi(true);
+        } else if (!isInPipMode()) {
+            applyFullscreenSystemUi(false);
+        }
+    }
+
+    @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus && fullscreen && !isInPipMode()) {
-            applyFullscreenSystemUi(true);
+        if (hasFocus && !isInPipMode()) {
+            applyFullscreenSystemUi(fullscreen);
         }
     }
 
@@ -3203,6 +3243,9 @@ public class MainActivity extends ComponentActivity {
         showControls();
         updateFullscreenButton();
         updateControllerLayoutSizes(fullscreen);
+        if (mainAppContainer != null) {
+            ViewCompat.requestApplyInsets(mainAppContainer);
+        }
     }
 
     @Override
