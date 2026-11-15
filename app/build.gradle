@@ -3,6 +3,9 @@ plugins {
     id 'com.android.application'
 }
 
+// Every CI build gets a higher version code, so Android installs it as an update
+def ciRunNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1") as Integer
+
 android {
     namespace 'com.rasvibe'
     compileSdk 36
@@ -11,8 +14,29 @@ android {
         applicationId 'com.rasvibe'
         minSdk 23
         targetSdk 35
-        versionCode 1
-        versionName '1.0.0'
+        versionCode ciRunNumber
+        versionName "1.0.${ciRunNumber}"
+    }
+
+    // Stable signing key (from GitHub Secrets). Android only updates an app when the
+    // new build is signed with the same key as the installed one.
+    signingConfigs {
+        shared {
+            if (System.getenv("RAS_KEYSTORE_PATH")) {
+                storeFile file(System.getenv("RAS_KEYSTORE_PATH"))
+                storePassword System.getenv("RAS_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("RAS_KEY_ALIAS")
+                keyPassword System.getenv("RAS_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            if (System.getenv("RAS_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.shared
+            }
+        }
     }
 
     compileOptions {
