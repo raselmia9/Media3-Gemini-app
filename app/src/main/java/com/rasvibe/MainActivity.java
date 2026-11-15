@@ -141,6 +141,10 @@ public class MainActivity extends ComponentActivity {
     private int autoHideDelayMs = 4000;      // Controls auto-hide delay
     private boolean keepScreenOn = false;
     private boolean downloadPageWasVisibleBeforePip = false;
+    private static final long SEEK_SWIPE_FULL_WIDTH_MS = 120000L; // one full screen width = 2 minutes
+    private boolean isSeekSwipe = false;
+    private long seekSwipeStartMs = 0;
+    private long seekSwipeTargetMs = 0;
 
     // ===== Downloads (movies & series only) =====
     private ImageView downloadControlButton;
@@ -1215,6 +1219,8 @@ public class MainActivity extends ComponentActivity {
                     swipeStartX = x;
                     swipeStartY = y;
                     isSwipeGestureActive = false;
+                    isSeekSwipe = false;
+                    seekSwipeStartMs = (player != null) ? player.getCurrentPosition() : 0;
                     isSwipeVolume = (x > v.getWidth() / 2f);
 
                     if (isSwipeVolume) {
@@ -1239,6 +1245,25 @@ public class MainActivity extends ComponentActivity {
                 case MotionEvent.ACTION_MOVE:
                     float deltaY = swipeStartY - y; // Upwards swipe increases value
                     float deltaX = x - swipeStartX;
+
+                    // Horizontal swipe on the video = seek (right = forward, left = back)
+                    if (!isSwipeGestureActive && !isSeekSwipe
+                            && Math.abs(deltaX) > dp(14) && Math.abs(deltaX) > Math.abs(deltaY) * 1.2f) {
+                        isSeekSwipe = true;
+                    }
+                    if (isSeekSwipe) {
+                        if (player != null) {
+                            long dur = player.getDuration();
+                            long target = seekSwipeStartMs
+                                    + (long) ((deltaX / (float) Math.max(1, v.getWidth())) * SEEK_SWIPE_FULL_WIDTH_MS);
+                            if (target < 0) target = 0;
+                            if (dur > 0 && target > dur) target = dur;
+                            seekSwipeTargetMs = target;
+                            String icon = (target >= seekSwipeStartMs) ? "⏩" : "⏪";
+                            showGestureHud(icon, formatTime(target) + " / " + formatTime(Math.max(0, dur)), -1);
+                        }
+                        return true;
+                    }
 
                     if (!isSwipeGestureActive) {
                         if (Math.abs(deltaY) > dp(14) && Math.abs(deltaY) > Math.abs(deltaX) * 1.2f) {
@@ -1276,6 +1301,15 @@ public class MainActivity extends ComponentActivity {
 
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
+                    if (isSeekSwipe) {
+                        isSeekSwipe = false;
+                        if (action == MotionEvent.ACTION_UP && player != null) {
+                            player.seekTo(seekSwipeTargetMs);
+                            updateSeekViews(seekSwipeTargetMs);
+                        }
+                        resetAutoHide();
+                        return true;
+                    }
                     if (isSwipeGestureActive) {
                         isSwipeGestureActive = false;
                         return true;
@@ -1287,11 +1321,52 @@ public class MainActivity extends ComponentActivity {
         });
     }
 
+    // Fullscreen: the multi-link row sits at the top of the player, like the controls.
+    // Normal and mini mode: it stays above the page as before.
+    private void refreshEpisodesRowPlacement() {
+        if (episodesScroll == null || inputScroll == null) return;
+        boolean overlayMode = fullscreen && customControlsOverlay != null && !isMiniPlayerActive;
+        ViewGroup current = (ViewGroup) episodesScroll.getParent();
+        if (overlayMode) {
+            if (current != customControlsOverlay) {
+                if (current != null) current.removeView(episodesScroll);
+                customControlsOverlay.addView(episodesScroll,
+                        new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+            }
+            episodesScroll.setBackgroundColor(Color.argb(150, 0, 0, 0));
+        } else {
+            if (current != inputScroll) {
+                if (current != null) current.removeView(episodesScroll);
+                inputScroll.addView(episodesScroll, 0, new LinearLayout.LayoutParams(-1, -2));
+            }
+            episodesScroll.setBackgroundColor(Color.TRANSPARENT);
+        }
+        syncEpisodesRowVisibility();
+    }
+
+    private void syncEpisodesRowVisibility() {
+        if (episodesScroll == null) return;
+        boolean hasEpisodes = !episodeButtonViews.isEmpty();
+        if (customControlsOverlay != null && episodesScroll.getParent() == customControlsOverlay) {
+            boolean controlsShown = isControlsVisible && bottomPanel != null
+                    && bottomPanel.getVisibility() == View.VISIBLE;
+            episodesScroll.setVisibility(hasEpisodes && controlsShown && !isInPipMode()
+                    ? View.VISIBLE : View.GONE);
+        } else {
+            episodesScroll.setVisibility(hasEpisodes ? View.VISIBLE : View.GONE);
+        }
+    }
+
     private void showControls() {
         if (isInPipMode()) return;
+        // The touch overlay must be reachable, otherwise taps never reach the controls
+        if (customControlsOverlay != null && !isMiniPlayerActive) {
+            customControlsOverlay.setVisibility(View.VISIBLE);
+        }
         bottomPanel.setVisibility(View.VISIBLE);
         isControlsVisible = true;
         applyDownloadButtonVisibility();
+        syncEpisodesRowVisibility();
         resetAutoHide();
     }
 
@@ -1300,15 +1375,28 @@ public class MainActivity extends ComponentActivity {
         bottomPanel.setVisibility(View.GONE);
         isControlsVisible = false;
         applyDownloadButtonVisibility();
+        syncEpisodesRowVisibility();
     }
 
     private void toggleControls() {
         if (isInPipMode()) return;
-        if (isControlsVisible) {
+        // Decide from what is actually on screen, not from a flag that can go stale
+        boolean onScreen = bottomPanel != null && bottomPanel.getVisibility() == View.VISIBLE;
+        if (onScreen) {
             hideControls();
         } else {
             showControls();
         }
+    }
+
+    // Brings the touch overlay back after PiP, focus changes or resume, unless the mini card is showing
+    private void refreshControlsVisibility() {
+        if (isInPipMode() || isMiniPlayerActive || playerContainer == null) return;
+        if (playerContainer.getVisibility() != View.VISIBLE) return;
+        if (customControlsOverlay != null && customControlsOverlay.getVisibility() != View.VISIBLE) {
+            customControlsOverlay.setVisibility(View.VISIBLE);
+        }
+        syncEpisodesRowVisibility();
     }
 
     private void resetAutoHide() {
@@ -2225,6 +2313,7 @@ public class MainActivity extends ComponentActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        refreshControlsVisibility();
         if (fullscreen && !isInPipMode()) {
             applyFullscreenSystemUi(true);
         } else if (!isInPipMode()) {
@@ -2237,6 +2326,7 @@ public class MainActivity extends ComponentActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus && !isInPipMode()) {
             applyFullscreenSystemUi(fullscreen);
+            refreshControlsVisibility();
         }
     }
 
@@ -2255,6 +2345,7 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void updateControllerLayoutSizes(boolean isFullscreen) {
+        refreshEpisodesRowPlacement();
         if (bottomPanel == null || buttonsRow == null) return;
 
         int btnW = isFullscreen ? dp(42) : dp(34);
@@ -3510,7 +3601,7 @@ public class MainActivity extends ComponentActivity {
             episodeButtonViews.add(btn);
         }
 
-        episodesScroll.setVisibility(View.VISIBLE);
+        syncEpisodesRowVisibility();
 
         // Select the first episode by default and output its URL
         selectEpisode(episodes, 0);
