@@ -1,0 +1,103 @@
+Media3-Gemini-app — প্রজেক্ট নোট (সর্বশেষ আপডেট: 15 Nov 2026)
+================================================================
+
+এই ফাইলে কী আছে: অ্যাপের বর্তমান অবস্থা, কোন ফাইলে কী বদলেছে, কী এখনো পরীক্ষা বাকি,
+এবং পরবর্তী ধাপ। এখানে কোনো গোপন পাসওয়ার্ড বা key লেখা নেই।
+
+1. মূল তথ্য
+-----------
+- GitHub repo  : raselmia9/Media3-Gemini-app (branch: main)
+- Package name : com.rasvibe
+- অ্যাপের নাম : RasVibe (Media3 ভিত্তিক video player)
+- Web UI repo  : raselmia9/SNTT-ALL-DATA
+  - EventCode.html  : মূল পেজ (live/category + merged movie section)
+  - Movie UI.html   : movie section-এর UI ছিল, এখন EventCode.html-এ merged
+  - Popular movie JSON: raselmia9/Movie_json_List / Popular movie.json (প্রায় 34,069 item, ~17 MB)
+
+2. প্রধান ফাইলসমূহ
+-------------------
+- app/src/main/java/com/rasvibe/.../MainActivity.java   : প্লেয়ার, PiP, controls, WebView, image cache
+- app/src/main/java/com/rasvibe/.../RasDownloads.java    : download তালিকা, speed, thumbnail helper
+- app/src/main/java/com/rasvibe/.../RasDownloadService.java : Media3 download service (notification)
+- app/src/main/res/values/strings.xml
+- app/src/main/AndroidManifest.xml  : <service> অবশ্যই <application>-এর ভিতরে
+- app/build.gradle                  : versionCode/versionName CI থেকে বাড়ে
+- .github/workflows/build.yml       : প্রতিটি build-এ version বাড়ে, stable keystore ব্যবহার করে
+
+3. যা করা হয়েছে (কোডে যুক্ত, কিন্তু Android build ও device test এখনো হয়নি)
+-----------------------------------------------------------------------
+- Search সূচকে আইকন (search.png) ও speed আইকন নিয়ে পরিবর্তন
+- Header-এর বাম পাশে menu আইকন, side menu-তে settings ও নিচে Downloads
+- ভিডিও সেটিংস: Video / Audio / Subtitle tabs, resolution দেখানো, Resize বাদ
+- Picture-in-Picture: official Android PiP ফিরিয়ে আনা; auto-enter শুধু ভিডিও চলাকালে
+- Default resize mode FILL (ভিডিও পুরো player জুড়ে)
+- Seek bar: primary progress সোনালি রঙে, secondary buffered progress যুক্ত
+- Reload আইকন: Material-style refresh; toast/notification বাদ
+- Notification ও launcher: monochrome R small icon, adaptive launcher icon (সাদা border সমস্যা সমাধানের চেষ্টা)
+- Downloads: Media3 persistent download, pause/resume/retry/delete, offline playback
+  - Download সম্পূর্ণ হলে card আকারে Downloads পেজে থাকে
+  - Card thumbnail: MP4/MKV-এ frame, HLS/DASH-এ placeholder
+  - Download speed badge (KB/s, MB/s), progress/MB-তে percent
+  - Downloads ফাইল private internal storage-এ, .nomedia দিয়ে file manager থেকে লুকানো
+  - Movie/series চেনা: duration নয়, output-এর thumbnail/banner, title ও link থাকলে movie/series ধরা হয়
+  - Player-এর নিচের বাম পাশে download বাটন; header-সহ movie link-এও download কাজ করার চেষ্টা
+- Player controls: visibility state sync (PiP/resume/window focus-এর পর ঠিক থাকে)
+- Fullscreen-এ multi-link/episode row player-এর উপরে থাকে
+- Horizontal swipe seek: পুরো screen width = 2 মিনিট
+- Downloads পেজ: offline playback-এ hide না হওয়া, PiP থেকে ফিরলে refresh
+- ভিডিও সেটিংস heading; seek step 10/30 সেকেন্ড, controls hide 4/6/10 সেকেন্ড, keep-screen-on option
+- WebView image cache: URL-এর SHA-256 নামে disk cache, 150 MB LRU limit (commit 968b676)
+- Web movie section: 50টি করে pagination, lowercase search key, grid/list আইকন (SVG), title বাম পাশে,
+  আইকন ডান পাশে, loader ও empty state center
+- Movie link parser: "|Referer=..." সহ header সংরক্ষিত হয়; player format বোঝে
+- Landscape/portrait edge-to-edge ও system bar inset সমন্বয় (চেষ্টা চলছে)
+
+4. এখনো পরীক্ষা বা সমাধান বাকি
+--------------------------------
+- Android build ও device test: সবগুলো পরিবর্তনের পর এখনো যাচাই হয়নি
+- Navigation bar transparent হচ্ছে না (portrait-এ, WebView নিচ পর্যন্ত যাচ্ছে না)
+- Portrait controls row-এর আইকন কিছু ডিভাইসে কাটা যেতে পারে
+- Font ও icon size সব ডিভাইসে একই রাখা
+- Downloads: speed badge ও thumbnail কাজ করছে কিনা যাচাই
+- Header movie link-এ download icon দেখা যাচ্ছে কিনা যাচাই
+- Search আইকন কার্ডের একদম মাঝখানে কিনা যাচাই
+- Movie playback: header সহ link phone-এ চলে কিনা যাচাই
+- Multi-link row fullscreen-এ সঠিক জায়গায় কিনা যাচাই
+- Downloads: MIUI-তে সাদা border/icon সমস্যার পুরোনো install/cache কারণে কিনা যাচাই
+
+5. ইনস্টল সমস্যা ও stable signing key (গুরুত্বপূর্ণ)
+------------------------------------------------------
+কারণ: প্রতিটি CI build-এ অস্থায়ী debug key ব্যবহার হতো, তাই signature বদলে যেত এবং
+আগের install-এর উপর update হতো না। সমাধান: একটি স্থায়ী keystore তৈরি করে GitHub Secrets-এ রাখা।
+
+GitHub Secrets (repo Settings > Secrets and variables > Actions):
+- RAS_KEYSTORE_BASE64   : keystore ফাইলের base64 রূপ
+- RAS_KEYSTORE_PASSWORD : keystore password
+- RAS_KEY_ALIAS         : key alias
+- RAS_KEY_PASSWORD      : key password
+
+সতর্কতা:
+- Keystore ফাইল ও password নিরাপদ জায়গায় ব্যাকআপ রাখুন। হারালে পরে আর update করা যাবে না।
+- এই ফাইলে বা repo-তে কখনো keystore বা password commit করবেন না।
+- একবার পুরোনো (debug key দিয়ে) install মুছে নতুন install করতে হতে পারে;
+  এতে অ্যাপের ভিতরের downloads ও app data মুছে যাবে।
+- Secrets না থাকলে workflow এখনও debug key ব্যবহার করবে, তাই পরবর্তী update-এর আগে secrets সেট করা জরুরি।
+
+6. Versioning
+-------------
+প্রতিটি CI build-এ versionCode = build number এবং versionName = 1.0.<run number>.
+এতে পুরোনো install-এর উপর নতুন APK update হতে পারে (signature একই থাকলে)।
+
+7. কাজের নিয়ম (ব্যবহারকারীর পছন্দ)
+-------------------------------------
+- উত্তর বাংলায়।
+- প্রতিটি সমাধান সম্পূর্ণ, একবারে কপি করার মতো করে দিতে হবে (পূর্ণ script বা পূর্ণ ফাইল)।
+- অ্যাপ বা HTML-এর যে ফাইল বদলাবে, সেটির নাম আগে বলতে হবে; নতুন ও পুরোনো ফাইল আলাদা করে চিহ্নিত।
+- Python script বা bash wrapper দেওয়া হবে না; শুধু Java/XML/HTML সোজা উত্তরে।
+- যা বদলানো হয়নি তা স্পষ্ট করে বলতে হবে।
+
+8. পরবর্তী ধাপ (প্রস্তাবিত)
+-----------------------------
+1. Stable keystore তৈরি করে 4টি GitHub Secrets সেট করুন।
+2. একবার নতুন APK build করে install করে উপরের "পরীক্ষা বাকি" তালিকা মিলিয়ে দেখুন।
+3. যেটি ভাঙা থাকবে, সেটির নাম ও screenshot দিন; সেই ফাইল ধরে সম্পূর্ণ সমাধান দেওয়া হবে।
