@@ -4780,8 +4780,10 @@ public class MainActivity extends ComponentActivity {
     private TextView snttProgressStatus;
     private LinearLayout snttProgressList;
     private final java.util.ArrayList<SnttRow> snttRows = new java.util.ArrayList<>();
+    // Hides the download list and brings the SNTT web view (HOME UI) back
     private final Runnable snttHidePanelRunnable = () -> {
         if (snttProgressPanel != null) snttProgressPanel.setVisibility(View.GONE);
+        if (snttWebView != null) snttWebView.setVisibility(View.VISIBLE);
     };
 
     private void buildSnttPage(FrameLayout parent) {
@@ -4794,19 +4796,13 @@ public class MainActivity extends ComponentActivity {
         column.setOrientation(LinearLayout.VERTICAL);
         snttPageOverlay.addView(column, new FrameLayout.LayoutParams(-1, -1));
 
-        // Download panel: sits below the header while SNTT data downloads, hides itself when done
+        // Download list view: fills the SNTT page while data downloads, then hides and shows HOME UI again
         snttProgressPanel = new LinearLayout(this);
         snttProgressPanel.setOrientation(LinearLayout.VERTICAL);
-        snttProgressPanel.setPadding(dp(14), dp(12), dp(14), dp(12));
-        GradientDrawable panelBg = new GradientDrawable();
-        panelBg.setColor(Color.rgb(16, 22, 36));
-        panelBg.setCornerRadius(dp(14));
-        panelBg.setStroke(dp(1), Color.argb(40, 255, 255, 255));
-        snttProgressPanel.setBackground(panelBg);
+        snttProgressPanel.setPadding(dp(14), dp(14), dp(14), dp(14));
+        snttProgressPanel.setBackgroundColor(BG_COLOR);
+        snttProgressPanel.setClickable(true);
         snttProgressPanel.setVisibility(View.GONE);
-        LinearLayout.LayoutParams panelParams = new LinearLayout.LayoutParams(-1, -2);
-        panelParams.setMargins(dp(10), dp(10), dp(10), dp(6));
-        column.addView(snttProgressPanel, panelParams);
 
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -4846,7 +4842,7 @@ public class MainActivity extends ComponentActivity {
         snttProgressList = new LinearLayout(this);
         snttProgressList.setOrientation(LinearLayout.VERTICAL);
         snttListScroll.addView(snttProgressList, new FrameLayout.LayoutParams(-1, -2));
-        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, dp(300));
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, 0, 1f);
         listParams.topMargin = dp(10);
         snttProgressPanel.addView(snttListScroll, listParams);
 
@@ -4916,6 +4912,9 @@ public class MainActivity extends ComponentActivity {
         snttPageStatus.setPadding(dp(20), dp(20), dp(20), dp(20));
         snttPageStatus.setVisibility(View.GONE);
         content.addView(snttPageStatus, new FrameLayout.LayoutParams(-1, -1));
+
+        // Added last so the download list sits on top of the web view
+        content.addView(snttProgressPanel, new FrameLayout.LayoutParams(-1, -1));
 
         parent.addView(snttPageOverlay, new FrameLayout.LayoutParams(-1, -1));
     }
@@ -5077,6 +5076,8 @@ public class MainActivity extends ComponentActivity {
         }
         snttDownloading = true;
         snttProgressPanel.removeCallbacks(snttHidePanelRunnable);
+        snttWebView.setVisibility(View.GONE);
+        snttPageStatus.setVisibility(View.GONE);
         snttProgressPanel.setVisibility(View.VISIBLE);
         snttProgressList.removeAllViews();
         snttRows.clear();
@@ -5249,9 +5250,9 @@ public class MainActivity extends ComponentActivity {
                 snttProgressStatus.setTextColor(Color.rgb(74, 222, 128));
                 snttProgressStatus.setText("সম্পন্ন: " + saved + "টি সংরক্ষিত, " + failed + "টি ব্যর্থ, " + skipped + "টি বাদ");
                 toast("ডাউনলোড সম্পন্ন: " + saved + "টি সংরক্ষিত" + (failed > 0 ? ", " + failed + "টি ব্যর্থ" : ""));
-                if (snttPageOpen && snttOnHome) loadSnttHome();
-                // All files processed: hide the layout automatically
-                snttProgressPanel.postDelayed(snttHidePanelRunnable, 1800);
+                // All files processed: load HOME UI in the web view, then hide the list automatically
+                loadSnttHome();
+                snttProgressPanel.postDelayed(snttHidePanelRunnable, 1500);
             }
         });
     }
