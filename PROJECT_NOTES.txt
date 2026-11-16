@@ -101,3 +101,9 @@ GitHub Secrets (repo Settings > Secrets and variables > Actions):
 1. Stable keystore তৈরি করে 4টি GitHub Secrets সেট করুন।
 2. একবার নতুন APK build করে install করে উপরের "পরীক্ষা বাকি" তালিকা মিলিয়ে দেখুন।
 3. যেটি ভাঙা থাকবে, সেটির নাম ও screenshot দিন; সেই ফাইল ধরে সম্পূর্ণ সমাধান দেওয়া হবে।
+
+== Update: SNTT page (HOME UI) ==
+- Side menu label: "SNTT HOME UI".
+- SNTT page buttons work again: tool cards and calibration cards call the same bridge names the SNTT HTML uses (Android / TinyDB / AppInventor) via SnttBridge.java.
+- Header download icon (SNTT page only, online only) shows a progress panel: overall bar, counter, and a list of file names with live status (spinner, check, cross).
+- Pending device test: tool cards, ship calibration, back from a tool to HOME, download panel, portrait/landscape layout.
