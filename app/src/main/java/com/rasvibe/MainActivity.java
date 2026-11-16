@@ -203,6 +203,8 @@ public class MainActivity extends ComponentActivity {
     private String currentMovieTitle = "";
     // Title shown at the top of the video (kept apart from currentMovieTitle so downloads are not affected)
     private String playerOverlayTitle = "";
+    // Page title from the web (movie/live/channel). Stays put while multi-link buttons change the episode
+    private String pageOverlayTitle = "";
     private TextView playerTitleView;
     private String currentMovieThumbnailUrl = "";
     // Video URL the web page sent together with title + thumbnail (the movie/series marker)
@@ -710,6 +712,7 @@ public class MainActivity extends ComponentActivity {
         episodesScroll.addView(episodesContainer, new FrameLayout.LayoutParams(-2, -2));
 
         inputScroll.addView(episodesScroll, new LinearLayout.LayoutParams(-1, -2));
+        episodesScroll.addOnLayoutChangeListener((lv, ll, lt, lr, lb, lo, lp, lq, lx) -> syncPlayerTitleLayout());
 
         // Header container for Input & Status (Permanently hidden per user requirement)
         LinearLayout inputHeader = new LinearLayout(this);
@@ -1392,7 +1395,13 @@ public class MainActivity extends ComponentActivity {
         syncEpisodesRowVisibility();
     }
 
+    // Called whenever the controls show or hide: the row and the title follow them together
     private void syncEpisodesRowVisibility() {
+        applyEpisodesRowVisibility();
+        updatePlayerTitle();
+    }
+
+    private void applyEpisodesRowVisibility() {
         if (episodesScroll == null) return;
         boolean hasEpisodes = !episodeButtonViews.isEmpty();
         if (customControlsOverlay != null && episodesScroll.getParent() == customControlsOverlay) {
@@ -2981,11 +2990,27 @@ public class MainActivity extends ComponentActivity {
 
     private void updatePlayerTitle() {
         if (playerTitleView == null) return;
+        // The title follows the controller: it shows only while the controls are on screen
+        boolean controlsOn = bottomPanel != null && bottomPanel.getVisibility() == View.VISIBLE;
         boolean show = playerOverlayTitle != null && !playerOverlayTitle.trim().isEmpty()
+                && controlsOn
                 && !isInPipMode() && !isMiniPlayerActive
                 && playerContainer != null && playerContainer.getVisibility() == View.VISIBLE;
         playerTitleView.setText(playerOverlayTitle == null ? "" : playerOverlayTitle.trim());
         playerTitleView.setVisibility(show ? View.VISIBLE : View.GONE);
+        syncPlayerTitleLayout();
+    }
+
+    // In fullscreen the multi-link row sits at the top, so the title moves down below it
+    private void syncPlayerTitleLayout() {
+        if (playerTitleView == null) return;
+        float offset = 0f;
+        if (episodesScroll != null && customControlsOverlay != null
+                && episodesScroll.getParent() == customControlsOverlay
+                && episodesScroll.getVisibility() == View.VISIBLE) {
+            offset = episodesScroll.getHeight();
+        }
+        playerTitleView.setTranslationY(offset);
     }
 
     // Centre card that stays a bit longer, used for a link that cannot play
@@ -3696,6 +3721,7 @@ public class MainActivity extends ComponentActivity {
         if (raw == null) return;
         String clean = raw.trim();
         metaVideoUrl = "";
+        pageOverlayTitle = "";
 
         // Check if Movie UI JSON metadata was emitted
         if (clean.startsWith("{") && clean.endsWith("}")) {
@@ -3707,8 +3733,19 @@ public class MainActivity extends ComponentActivity {
 
                 currentMovieTitle = title;
                 playerOverlayTitle = title;
+                pageOverlayTitle = title;
                 currentMovieThumbnailUrl = thumbnail;
                 metaVideoUrl = videoUrl;
+
+                // Multi-link (live event): show the page title above the link buttons
+                String linkList = movieJson.optString("links", "").trim();
+                if (!linkList.isEmpty() && linkList.contains(",,")) {
+                    List<EpisodeItem> linkItems = parseEpisodeList(linkList);
+                    if (!linkItems.isEmpty()) {
+                        renderEpisodeButtons(linkItems);
+                        return;
+                    }
+                }
 
                 if (!videoUrl.isEmpty()) {
                     hideEpisodeButtons();
@@ -3799,6 +3836,22 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
+    private List<EpisodeItem> parseEpisodeList(String raw) {
+        List<EpisodeItem> episodes = new ArrayList<>();
+        for (String it : raw.split(",\\)")) {
+            it = it.trim();
+            if (it.isEmpty()) continue;
+            String[] parts = it.split(",,", 2);
+            if (parts.length == 2) {
+                String label = parts[0].trim();
+                String link = parts[1].trim();
+                if (label.isEmpty()) label = "Link " + (episodes.size() + 1);
+                if (!link.isEmpty()) episodes.add(new EpisodeItem(label, link));
+            }
+        }
+        return episodes;
+    }
+
     private void renderEpisodeButtons(List<EpisodeItem> episodes) {
         if (episodesContainer == null || episodesScroll == null) return;
 
@@ -3884,7 +3937,7 @@ public class MainActivity extends ComponentActivity {
         }
 
         setStatus("Selected: " + selectedItem.title);
-        playerOverlayTitle = selectedItem.title;
+        playerOverlayTitle = pageOverlayTitle.isEmpty() ? selectedItem.title : pageOverlayTitle;
 
         // Make player visible and auto-play selected episode
         if (playerContainer != null) {
