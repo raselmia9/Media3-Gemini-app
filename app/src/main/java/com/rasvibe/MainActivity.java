@@ -2694,14 +2694,22 @@ public class MainActivity extends ComponentActivity {
         header.setPadding(0, 0, 0, dp(20));
         sideMenuPanel.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
+        TextView offlineSection = new TextView(this);
+        offlineSection.setText("অফলাইন");
+        offlineSection.setTextColor(Color.rgb(250, 204, 21));
+        offlineSection.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        offlineSection.setTypeface(null, Typeface.BOLD);
+        offlineSection.setPadding(dp(4), 0, 0, dp(8));
+        sideMenuPanel.addView(offlineSection, new LinearLayout.LayoutParams(-1, -2));
+
+        addSideMenuRow("SNTT Room UI", () -> {
+            closeSideMenu();
+            showSnttPage();
+        });
+
         addSideMenuRow("Downloads", () -> {
             closeSideMenu();
             showDownloadPage();
-        });
-
-        addSideMenuRow("SNTT App", () -> {
-            closeSideMenu();
-            showSnttPage();
         });
 
         TextView videoSection = new TextView(this);
