@@ -201,6 +201,9 @@ public class MainActivity extends ComponentActivity {
     private boolean isEventHtmlLoaded = false;
 
     private String currentMovieTitle = "";
+    // Title shown at the top of the video (kept apart from currentMovieTitle so downloads are not affected)
+    private String playerOverlayTitle = "";
+    private TextView playerTitleView;
     private String currentMovieThumbnailUrl = "";
     // Video URL the web page sent together with title + thumbnail (the movie/series marker)
     private String metaVideoUrl = "";
@@ -685,6 +688,9 @@ public class MainActivity extends ComponentActivity {
         // Center Gesture Notification HUD
         buildGestureHud();
         playerContainer.addView(gestureHudCard, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+
+        buildPlayerTitle();
+        playerContainer.addView(playerTitleView, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
 
         rootLayout.addView(playerContainer, new LinearLayout.LayoutParams(-1, 0, 0.25f));
 
@@ -1751,6 +1757,7 @@ public class MainActivity extends ComponentActivity {
     // ==========================================
 
     private void playStream() {
+        updatePlayerTitle();
 
         String rawInput = value(urlInput);
         if (rawInput.contains("Playlist>")) {
@@ -2955,6 +2962,32 @@ public class MainActivity extends ComponentActivity {
         if (offlineChoiceOverlay != null) offlineChoiceOverlay.setVisibility(View.GONE);
     }
 
+    // Title bar at the top of the video
+    private void buildPlayerTitle() {
+        playerTitleView = new TextView(this);
+        playerTitleView.setTextColor(Color.WHITE);
+        playerTitleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        playerTitleView.setTypeface(null, Typeface.BOLD);
+        playerTitleView.setMaxLines(1);
+        playerTitleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        playerTitleView.setPadding(dp(14), dp(10), dp(14), dp(22));
+        playerTitleView.setBackground(new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.argb(190, 0, 0, 0), Color.TRANSPARENT}));
+        playerTitleView.setClickable(false);
+        playerTitleView.setFocusable(false);
+        playerTitleView.setVisibility(View.GONE);
+    }
+
+    private void updatePlayerTitle() {
+        if (playerTitleView == null) return;
+        boolean show = playerOverlayTitle != null && !playerOverlayTitle.trim().isEmpty()
+                && !isInPipMode() && !isMiniPlayerActive
+                && playerContainer != null && playerContainer.getVisibility() == View.VISIBLE;
+        playerTitleView.setText(playerOverlayTitle == null ? "" : playerOverlayTitle.trim());
+        playerTitleView.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
     // Centre card that stays a bit longer, used for a link that cannot play
     private void showErrorHud(String text) {
         if (gestureHudCard == null || isInPipMode()) return;
@@ -3377,6 +3410,7 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void updatePipParams() {
+        updatePlayerTitle();
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         try {
             Rational aspectRatio = new Rational(16, 9);
@@ -3587,6 +3621,7 @@ public class MainActivity extends ComponentActivity {
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        updatePlayerTitle();
         if (isInPictureInPictureMode) {
             wasMiniPlayerBeforePip = isMiniPlayerActive;
             wasFullscreenBeforePip = fullscreen;
@@ -3668,9 +3703,10 @@ public class MainActivity extends ComponentActivity {
                 JSONObject movieJson = new JSONObject(clean);
                 String title = movieJson.optString("title", "").trim();
                 String thumbnail = movieJson.optString("thumbnail", "").trim();
-                String videoUrl = movieJson.optString("videoUrl", "").trim();
+                String videoUrl = movieJson.optString("videoUrl", movieJson.optString("url", "")).trim();
 
                 currentMovieTitle = title;
+                playerOverlayTitle = title;
                 currentMovieThumbnailUrl = thumbnail;
                 metaVideoUrl = videoUrl;
 
@@ -3699,6 +3735,7 @@ public class MainActivity extends ComponentActivity {
         }
 
         if (clean.contains("Playlist>")) {
+            playerOverlayTitle = "";
             String targetUrl = clean.replace("Playlist>", "").trim();
             if (urlInput != null) {
                 urlInput.setText(targetUrl);
@@ -3746,6 +3783,7 @@ public class MainActivity extends ComponentActivity {
         // Single link fallback: put link into urlInput, reveal player, and auto-play
         currentMovieTitle = "";
         currentMovieThumbnailUrl = "";
+        playerOverlayTitle = "";
         hideEpisodeButtons();
         if (!clean.isEmpty()) {
             if (urlInput != null) {
@@ -3818,6 +3856,7 @@ public class MainActivity extends ComponentActivity {
 
         String itemUrl = (selectedItem.url != null) ? selectedItem.url.trim() : "";
         if (itemUrl.contains("Playlist>")) {
+            playerOverlayTitle = "";
             String targetUrl = itemUrl.replace("Playlist>", "").trim();
             if (urlInput != null) {
                 urlInput.setText(targetUrl);
@@ -3845,6 +3884,7 @@ public class MainActivity extends ComponentActivity {
         }
 
         setStatus("Selected: " + selectedItem.title);
+        playerOverlayTitle = selectedItem.title;
 
         // Make player visible and auto-play selected episode
         if (playerContainer != null) {
