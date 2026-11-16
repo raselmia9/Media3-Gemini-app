@@ -409,9 +409,9 @@ public class MainActivity extends ComponentActivity {
 
         handleIncomingIntent(getIntent());
 
-        // Opened without internet: go straight to the downloads page
+        // Opened without internet: show a card with Downloads and SNTT HOME UI buttons
         if (!isNetworkAvailable()) {
-            showDownloadPage();
+            showOfflineChoice();
         }
 
         getOnBackPressedDispatcher().addCallback(
@@ -419,7 +419,11 @@ public class MainActivity extends ComponentActivity {
                 new OnBackPressedCallback(true) {
                     @Override
                     public void handleOnBackPressed() {
-                        if (snttPageOpen) {
+                        if (sideMenuOverlay != null && sideMenuOverlay.getVisibility() == View.VISIBLE) {
+                            closeSideMenu();
+                        } else if (isOfflineChoiceShowing()) {
+                            hideOfflineChoice();
+                        } else if (snttPageOpen) {
                             if (!snttOnHome) {
                                 loadSnttHome();
                             } else {
@@ -429,8 +433,6 @@ public class MainActivity extends ComponentActivity {
                             hideDownloadPage();
                         } else if (splashLayout != null && splashLayout.getVisibility() == View.VISIBLE && !isSplashDismissed) {
                             dismissSplashScreen();
-                        } else if (sideMenuOverlay != null && sideMenuOverlay.getVisibility() == View.VISIBLE) {
-                            closeSideMenu();
                         } else if (isSearchOpen) {
                             closeSearch();
                         } else if (fullscreen) {
@@ -802,6 +804,7 @@ public class MainActivity extends ComponentActivity {
         mainAppContainer.addView(rootLayout, new FrameLayout.LayoutParams(-1, -1));
 
         buildSideMenu(mainAppContainer);
+        buildOfflineChoice(mainAppContainer);
         buildSplashScreen(mainAppContainer);
 
         setContentView(mainAppContainer);
@@ -1641,6 +1644,7 @@ public class MainActivity extends ComponentActivity {
                                     + " - "
                                     + error.getMessage()
                     );
+                    showErrorHud("ভিডিও লিংক চলছে না");
                 }
             });
 
@@ -2690,13 +2694,38 @@ public class MainActivity extends ComponentActivity {
         sideMenuPanel.setClickable(true); // keeps taps inside the panel from closing it
         sideMenuPanel.setTranslationX(-dp(270));
 
+        LinearLayout headerRow = new LinearLayout(this);
+        headerRow.setOrientation(LinearLayout.HORIZONTAL);
+        headerRow.setGravity(Gravity.CENTER_VERTICAL);
+        headerRow.setPadding(0, 0, 0, dp(20));
+
+        ImageView hideMenuBtn = new ImageView(this);
+        hideMenuBtn.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        hideMenuBtn.setColorFilter(Color.WHITE);
+        hideMenuBtn.setPadding(dp(7), dp(7), dp(7), dp(7));
+        int hideResId = getResources().getIdentifier("ic_side_menu_hide", "drawable", getPackageName());
+        if (hideResId != 0) {
+            hideMenuBtn.setImageResource(hideResId);
+        }
+        hideMenuBtn.setContentDescription("Hide menu");
+        hideMenuBtn.setFocusable(true);
+        hideMenuBtn.setClickable(true);
+        GradientDrawable hideBg = new GradientDrawable();
+        hideBg.setColor(Color.argb(160, 35, 48, 67));
+        hideBg.setCornerRadius(dp(8));
+        hideMenuBtn.setBackground(hideBg);
+        hideMenuBtn.setOnClickListener(v -> closeSideMenu());
+        LinearLayout.LayoutParams hideParams = new LinearLayout.LayoutParams(dp(34), dp(34));
+        hideParams.rightMargin = dp(10);
+        headerRow.addView(hideMenuBtn, hideParams);
+
         TextView header = new TextView(this);
         header.setText("RasVibe");
         header.setTextColor(Color.WHITE);
         header.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
         header.setTypeface(null, Typeface.BOLD);
-        header.setPadding(0, 0, 0, dp(20));
-        sideMenuPanel.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        headerRow.addView(header, new LinearLayout.LayoutParams(0, -2, 1f));
+        sideMenuPanel.addView(headerRow, new LinearLayout.LayoutParams(-1, -2));
 
         TextView offlineSection = new TextView(this);
         offlineSection.setText("অফলাইন");
@@ -2826,6 +2855,116 @@ public class MainActivity extends ComponentActivity {
         if (resizeMode == 0) return "Fit";
         if (resizeMode == 1) return "Fill";
         return "Zoom";
+    }
+
+    // ==========================================
+    // OFFLINE CHOICE CARD (shown when the app opens without internet)
+    // ==========================================
+
+    private FrameLayout offlineChoiceOverlay;
+
+    private void buildOfflineChoice(FrameLayout parent) {
+        offlineChoiceOverlay = new FrameLayout(this);
+        offlineChoiceOverlay.setBackgroundColor(Color.argb(170, 0, 0, 0));
+        offlineChoiceOverlay.setVisibility(View.GONE);
+        offlineChoiceOverlay.setClickable(true);
+        offlineChoiceOverlay.setOnClickListener(v -> hideOfflineChoice());
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(20), dp(20), dp(20), dp(16));
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(BG_COLOR);
+        cardBg.setCornerRadius(dp(16));
+        cardBg.setStroke(dp(1), Color.argb(60, 255, 255, 255));
+        card.setBackground(cardBg);
+        card.setClickable(true); // taps inside the card do not close it
+
+        TextView title = new TextView(this);
+        title.setText("ইন্টারনেট সংযোগ নেই");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
+        title.setTypeface(null, Typeface.BOLD);
+        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText("অফলাইনে ডাউনলোড বা SNTT HOME UI খুলতে নিচের একটি বাটনে চাপুন।");
+        subtitle.setTextColor(Color.LTGRAY);
+        subtitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(-1, -2);
+        subParams.topMargin = dp(8);
+        subParams.bottomMargin = dp(16);
+        card.addView(subtitle, subParams);
+
+        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(-1, -2);
+        btnParams.bottomMargin = dp(10);
+
+        card.addView(makeOfflineChoiceButton("Downloads", () -> {
+            hideOfflineChoice();
+            showDownloadPage();
+        }), btnParams);
+
+        card.addView(makeOfflineChoiceButton("SNTT HOME UI", () -> {
+            hideOfflineChoice();
+            showSnttPage();
+        }), btnParams);
+
+        TextView later = new TextView(this);
+        later.setText("পরে");
+        later.setTextColor(Color.LTGRAY);
+        later.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        later.setGravity(Gravity.CENTER);
+        later.setPadding(0, dp(8), 0, dp(4));
+        later.setClickable(true);
+        later.setOnClickListener(v -> hideOfflineChoice());
+        card.addView(later, new LinearLayout.LayoutParams(-1, -2));
+
+        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER);
+        cardParams.setMargins(dp(24), 0, dp(24), 0);
+        offlineChoiceOverlay.addView(card, cardParams);
+        parent.addView(offlineChoiceOverlay, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private TextView makeOfflineChoiceButton(String label, Runnable action) {
+        TextView btn = new TextView(this);
+        btn.setText(label);
+        btn.setTextColor(Color.WHITE);
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        btn.setTypeface(null, Typeface.BOLD);
+        btn.setGravity(Gravity.CENTER);
+        btn.setPadding(dp(14), dp(14), dp(14), dp(14));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(180, 35, 48, 67));
+        bg.setCornerRadius(dp(12));
+        btn.setBackground(bg);
+        btn.setClickable(true);
+        btn.setFocusable(true);
+        btn.setOnClickListener(v -> action.run());
+        return btn;
+    }
+
+    private boolean isOfflineChoiceShowing() {
+        return offlineChoiceOverlay != null && offlineChoiceOverlay.getVisibility() == View.VISIBLE;
+    }
+
+    private void showOfflineChoice() {
+        if (offlineChoiceOverlay != null) offlineChoiceOverlay.setVisibility(View.VISIBLE);
+    }
+
+    private void hideOfflineChoice() {
+        if (offlineChoiceOverlay != null) offlineChoiceOverlay.setVisibility(View.GONE);
+    }
+
+    // Centre card that stays a bit longer, used for a link that cannot play
+    private void showErrorHud(String text) {
+        if (gestureHudCard == null || isInPipMode()) return;
+        gestureHudHandler.removeCallbacks(hideGestureHudRunnable);
+        gestureHudIcon.setText("⚠️");
+        gestureHudText.setText(text);
+        gestureHudProgress.setVisibility(View.GONE);
+        gestureHudCard.setAlpha(1f);
+        gestureHudCard.setVisibility(View.VISIBLE);
+        gestureHudHandler.postDelayed(hideGestureHudRunnable, 4000);
     }
 
     private void openSideMenu() {
