@@ -5513,7 +5513,7 @@ public class MainActivity extends ComponentActivity {
                     r.glyph.setText("✓");
                     r.glyph.setTextColor(Color.rgb(74, 222, 128));
                     r.info.setTextColor(Color.rgb(134, 239, 172));
-                    String doneAt = new java.text.SimpleDateFormat("hh:mm a", Locale.ENGLISH).format(new java.util.Date());
+                    String doneAt = new java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.ENGLISH).format(new java.util.Date());
                     r.info.setText("সম্পন্ন • " + formatSnttBytes(bytes) + " • " + String.format(Locale.ENGLISH, "%.1fs", seconds) + " • " + doneAt);
                     r.bar.setProgress(100);
                 } else if (state == SnttHome.STATE_FAILED) {
