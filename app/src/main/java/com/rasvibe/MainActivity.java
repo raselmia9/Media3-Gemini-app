@@ -5036,6 +5036,12 @@ public class MainActivity extends ComponentActivity {
         ProgressBar bar;
         ProgressBar spinner;
         long startedAt;
+        String name = "";
+        int state = 0;
+        long bytes;
+        String note = "";
+        String doneAt = "";
+        double seconds;
     }
 
     private boolean snttOnHome = true;
@@ -5232,7 +5238,8 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
-    // Folder icon: first tap shows the download list (web view hides), next tap shows the SNTT web view again
+    // Folder icon: first tap shows the download list (web view hides), next tap shows the SNTT web view again.
+    // The list is stored on the device, so it can be opened anytime, even after the app was closed and reopened.
     private void toggleSnttDownloadList() {
         if (snttDownloading) {
             toast("ডাউনলোড চলছে...");
@@ -5243,15 +5250,16 @@ public class MainActivity extends ComponentActivity {
             snttHidePanelRunnable.run();
             return;
         }
-        if (!SnttHome.hasTag(this, SnttHome.HOME_TAG)) {
-            toast("SNTT HOME UI এখনো ডাউনলোড হয়নি। উপরের ডাউনলোড আইকনে চাপুন।");
-            return;
-        }
         snttProgressPanel.removeCallbacks(snttHidePanelRunnable);
         if (snttRows.isEmpty()) {
+            restoreSnttRowsFromStore();
+        }
+        if (snttRows.isEmpty()) {
             snttProgressCount.setText("");
+            snttProgressBar.setMax(1);
+            snttProgressBar.setProgress(0);
             snttProgressStatus.setTextColor(Color.LTGRAY);
-            snttProgressStatus.setText("এই সেশনে কোনো ডাউনলোড তালিকা নেই। ডাউনলোড আইকনে চাপলে তালিকা দেখা যাবে।");
+            snttProgressStatus.setText("এখনো কোনো ডাউনলোড তালিকা নেই। উপরের ডাউনলোড আইকনে চাপলে তালিকা দেখা যাবে।");
         }
         snttWebView.setVisibility(View.GONE);
         snttProgressPanel.setVisibility(View.VISIBLE);
@@ -5311,6 +5319,165 @@ public class MainActivity extends ComponentActivity {
         } catch (Exception e) {
             toast("Ship selection error: " + e.getMessage());
         }
+    }
+
+    // ----- Download list storage (so the list stays available after the app restarts) -----
+
+    private static final String SNTT_LIST_PREFS = "sntt_download_list";
+
+    private void saveSnttRowsState() {
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (SnttRow r : snttRows) {
+                JSONObject o = new JSONObject();
+                o.put("n", r.name == null ? "" : r.name);
+                o.put("s", r.state == SNTT_STATE_ACTIVE ? SNTT_STATE_PENDING : r.state);
+                o.put("b", r.bytes);
+                o.put("t", r.note == null ? "" : r.note);
+                o.put("d", r.doneAt == null ? "" : r.doneAt);
+                o.put("sec", r.seconds);
+                arr.put(o);
+            }
+            getSharedPreferences(SNTT_LIST_PREFS, MODE_PRIVATE).edit().putString("rows", arr.toString()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void restoreSnttRowsFromStore() {
+        String json = getSharedPreferences(SNTT_LIST_PREFS, MODE_PRIVATE).getString("rows", "");
+        if (json == null || json.isEmpty()) return;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            snttProgressList.removeAllViews();
+            snttRows.clear();
+            int done = 0;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.getJSONObject(i);
+                addSnttRowCard(i, o.optString("n", ""));
+                SnttRow r = snttRows.get(i);
+                r.state = o.optInt("s", SNTT_STATE_PENDING);
+                r.bytes = o.optLong("b", 0L);
+                r.note = o.optString("t", "");
+                r.doneAt = o.optString("d", "");
+                r.seconds = o.optDouble("sec", 0d);
+                applySnttRowRestored(r);
+                if (r.state == SnttHome.STATE_OK || r.state == SnttHome.STATE_FAILED || r.state == SnttHome.STATE_SKIPPED) {
+                    done++;
+                }
+            }
+            snttProgressBar.setMax(Math.max(1, snttRows.size()));
+            snttProgressBar.setProgress(done);
+            snttProgressCount.setText(done + "/" + snttRows.size());
+            snttProgressStatus.setTextColor(Color.LTGRAY);
+            snttProgressStatus.setText(done == snttRows.size()
+                    ? "আগের ডাউনলোড সম্পন্ন • " + snttRows.size() + "টি ফাইল"
+                    : "আগের ডাউনলোড অসম্পূর্ণ • " + done + "/" + snttRows.size());
+        } catch (Exception e) {
+            snttRows.clear();
+            snttProgressList.removeAllViews();
+        }
+    }
+
+    private void applySnttRowRestored(SnttRow r) {
+        r.card.setBackground(snttCardBackground(r.state));
+        if (r.state == SnttHome.STATE_OK) {
+            r.glyph.setText("✓");
+            r.glyph.setTextColor(Color.rgb(74, 222, 128));
+            r.info.setTextColor(Color.rgb(134, 239, 172));
+            r.info.setText("সম্পন্ন • " + formatSnttBytes(r.bytes) + " • " + String.format(Locale.ENGLISH, "%.1fs", r.seconds) + " • " + r.doneAt);
+            r.bar.setProgress(100);
+        } else if (r.state == SnttHome.STATE_FAILED) {
+            r.glyph.setText("✕");
+            r.glyph.setTextColor(Color.rgb(248, 113, 113));
+            r.info.setTextColor(Color.rgb(252, 165, 165));
+            r.info.setText("ব্যর্থ • " + r.note);
+            r.bar.setProgress(0);
+        } else if (r.state == SnttHome.STATE_SKIPPED) {
+            r.glyph.setText("–");
+            r.glyph.setTextColor(Color.GRAY);
+            r.info.setTextColor(Color.rgb(148, 163, 184));
+            r.info.setText("বাদ • " + r.note);
+            r.bar.setProgress(0);
+        } else {
+            r.bar.setProgress(0);
+        }
+    }
+
+    // Builds one download card (name, progress bar, status) and adds it to the list
+    private void addSnttRowCard(int i, String name) {
+                    SnttRow r = new SnttRow();
+                    r.name = name;
+
+                    LinearLayout card = new LinearLayout(MainActivity.this);
+                    card.setOrientation(LinearLayout.VERTICAL);
+                    card.setPadding(dp(12), dp(10), dp(12), dp(10));
+                    card.setBackground(snttCardBackground(SNTT_STATE_PENDING));
+                    LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+                    cardParams.bottomMargin = dp(8);
+                    r.card = card;
+
+                    LinearLayout top = new LinearLayout(MainActivity.this);
+                    top.setOrientation(LinearLayout.HORIZONTAL);
+                    top.setGravity(Gravity.CENTER_VERTICAL);
+
+                    TextView badge = new TextView(MainActivity.this);
+                    badge.setText(String.format(Locale.ENGLISH, "%02d", i + 1));
+                    badge.setTextColor(Color.rgb(125, 211, 252));
+                    badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
+                    badge.setTypeface(null, Typeface.BOLD);
+                    badge.setPadding(dp(7), dp(3), dp(7), dp(3));
+                    GradientDrawable badgeBg = new GradientDrawable();
+                    badgeBg.setColor(Color.rgb(14, 34, 52));
+                    badgeBg.setCornerRadius(dp(6));
+                    badge.setBackground(badgeBg);
+                    LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2, -2);
+                    badgeParams.rightMargin = dp(10);
+                    top.addView(badge, badgeParams);
+
+                    TextView nameView = new TextView(MainActivity.this);
+                    nameView.setText(name);
+                    nameView.setTextColor(Color.WHITE);
+                    nameView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+                    nameView.setTypeface(null, Typeface.BOLD);
+                    nameView.setSingleLine(true);
+                    nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    top.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1f));
+
+                    r.glyph = new TextView(MainActivity.this);
+                    r.glyph.setText("•");
+                    r.glyph.setTextColor(Color.GRAY);
+                    r.glyph.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+                    r.glyph.setTypeface(null, Typeface.BOLD);
+                    r.glyph.setGravity(Gravity.CENTER);
+                    top.addView(r.glyph, new LinearLayout.LayoutParams(dp(22), -2));
+
+                    r.spinner = new ProgressBar(MainActivity.this);
+                    r.spinner.setVisibility(View.GONE);
+                    top.addView(r.spinner, new LinearLayout.LayoutParams(dp(18), dp(18)));
+
+                    card.addView(top, new LinearLayout.LayoutParams(-1, -2));
+
+                    r.info = new TextView(MainActivity.this);
+                    r.info.setText("অপেক্ষায়");
+                    r.info.setTextColor(Color.rgb(148, 163, 184));
+                    r.info.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+                    r.info.setSingleLine(true);
+                    r.info.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(-1, -2);
+                    infoParams.topMargin = dp(6);
+                    card.addView(r.info, infoParams);
+
+                    r.bar = new ProgressBar(MainActivity.this, null, android.R.attr.progressBarStyleHorizontal);
+                    r.bar.setMax(100);
+                    r.bar.setProgress(0);
+                    r.bar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.rgb(56, 189, 248)));
+                    r.bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.argb(40, 255, 255, 255)));
+                    LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, dp(4));
+                    barParams.topMargin = dp(8);
+                    card.addView(r.bar, barParams);
+
+                    snttProgressList.addView(card, cardParams);
+                    snttRows.add(r);
     }
 
     // ----- Download cards -----
@@ -5389,79 +5556,9 @@ public class MainActivity extends ComponentActivity {
                 snttProgressList.removeAllViews();
                 snttRows.clear();
                 for (int i = 0; i < names.length; i++) {
-                    SnttRow r = new SnttRow();
-
-                    LinearLayout card = new LinearLayout(MainActivity.this);
-                    card.setOrientation(LinearLayout.VERTICAL);
-                    card.setPadding(dp(12), dp(10), dp(12), dp(10));
-                    card.setBackground(snttCardBackground(SNTT_STATE_PENDING));
-                    LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
-                    cardParams.bottomMargin = dp(8);
-                    r.card = card;
-
-                    LinearLayout top = new LinearLayout(MainActivity.this);
-                    top.setOrientation(LinearLayout.HORIZONTAL);
-                    top.setGravity(Gravity.CENTER_VERTICAL);
-
-                    TextView badge = new TextView(MainActivity.this);
-                    badge.setText(String.format(Locale.ENGLISH, "%02d", i + 1));
-                    badge.setTextColor(Color.rgb(125, 211, 252));
-                    badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
-                    badge.setTypeface(null, Typeface.BOLD);
-                    badge.setPadding(dp(7), dp(3), dp(7), dp(3));
-                    GradientDrawable badgeBg = new GradientDrawable();
-                    badgeBg.setColor(Color.rgb(14, 34, 52));
-                    badgeBg.setCornerRadius(dp(6));
-                    badge.setBackground(badgeBg);
-                    LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2, -2);
-                    badgeParams.rightMargin = dp(10);
-                    top.addView(badge, badgeParams);
-
-                    TextView nameView = new TextView(MainActivity.this);
-                    nameView.setText(names[i]);
-                    nameView.setTextColor(Color.WHITE);
-                    nameView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
-                    nameView.setTypeface(null, Typeface.BOLD);
-                    nameView.setSingleLine(true);
-                    nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                    top.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1f));
-
-                    r.glyph = new TextView(MainActivity.this);
-                    r.glyph.setText("•");
-                    r.glyph.setTextColor(Color.GRAY);
-                    r.glyph.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-                    r.glyph.setTypeface(null, Typeface.BOLD);
-                    r.glyph.setGravity(Gravity.CENTER);
-                    top.addView(r.glyph, new LinearLayout.LayoutParams(dp(22), -2));
-
-                    r.spinner = new ProgressBar(MainActivity.this);
-                    r.spinner.setVisibility(View.GONE);
-                    top.addView(r.spinner, new LinearLayout.LayoutParams(dp(18), dp(18)));
-
-                    card.addView(top, new LinearLayout.LayoutParams(-1, -2));
-
-                    r.info = new TextView(MainActivity.this);
-                    r.info.setText("অপেক্ষায়");
-                    r.info.setTextColor(Color.rgb(148, 163, 184));
-                    r.info.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
-                    r.info.setSingleLine(true);
-                    r.info.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                    LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(-1, -2);
-                    infoParams.topMargin = dp(6);
-                    card.addView(r.info, infoParams);
-
-                    r.bar = new ProgressBar(MainActivity.this, null, android.R.attr.progressBarStyleHorizontal);
-                    r.bar.setMax(100);
-                    r.bar.setProgress(0);
-                    r.bar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.rgb(56, 189, 248)));
-                    r.bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.argb(40, 255, 255, 255)));
-                    LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, dp(4));
-                    barParams.topMargin = dp(8);
-                    card.addView(r.bar, barParams);
-
-                    snttProgressList.addView(card, cardParams);
-                    snttRows.add(r);
+                    addSnttRowCard(i, names[i]);
                 }
+                saveSnttRowsState();
                 snttProgressBar.setMax(Math.max(1, names.length));
                 snttProgressBar.setProgress(0);
                 snttProgressCount.setText("0/" + names.length);
@@ -5473,6 +5570,7 @@ public class MainActivity extends ComponentActivity {
                 SnttRow r = snttRow(index);
                 if (r == null) return;
                 r.startedAt = System.currentTimeMillis();
+                r.state = SNTT_STATE_ACTIVE;
                 r.card.setBackground(snttCardBackground(SNTT_STATE_ACTIVE));
                 r.glyph.setVisibility(View.GONE);
                 r.spinner.setVisibility(View.VISIBLE);
@@ -5509,11 +5607,17 @@ public class MainActivity extends ComponentActivity {
                 r.card.setBackground(snttCardBackground(state));
                 r.bar.setIndeterminate(false);
                 double seconds = (System.currentTimeMillis() - r.startedAt) / 1000.0;
+                r.state = state;
+                r.bytes = bytes;
+                r.note = note == null ? "" : note;
+                r.seconds = seconds;
+                r.doneAt = new java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.ENGLISH).format(new java.util.Date());
+                saveSnttRowsState();
                 if (state == SnttHome.STATE_OK) {
                     r.glyph.setText("✓");
                     r.glyph.setTextColor(Color.rgb(74, 222, 128));
                     r.info.setTextColor(Color.rgb(134, 239, 172));
-                    String doneAt = new java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.ENGLISH).format(new java.util.Date());
+                    String doneAt = r.doneAt;
                     r.info.setText("সম্পন্ন • " + formatSnttBytes(bytes) + " • " + String.format(Locale.ENGLISH, "%.1fs", seconds) + " • " + doneAt);
                     r.bar.setProgress(100);
                 } else if (state == SnttHome.STATE_FAILED) {
