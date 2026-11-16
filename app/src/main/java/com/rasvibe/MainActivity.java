@@ -4760,19 +4760,29 @@ public class MainActivity extends ComponentActivity {
     // ==========================================
 
     // ===== SNTT page: opened from the side menu, controlled from the RasVibe header =====
+    private static final int SNTT_STATE_PENDING = 0;
+    private static final int SNTT_STATE_ACTIVE = 4;
+
     private static final class SnttRow {
+        LinearLayout card;
         TextView glyph;
+        TextView info;
+        ProgressBar bar;
         ProgressBar spinner;
+        long startedAt;
     }
 
     private boolean snttOnHome = true;
     private LinearLayout snttProgressPanel;
+    private ScrollView snttListScroll;
     private ProgressBar snttProgressBar;
     private TextView snttProgressCount;
     private TextView snttProgressStatus;
-    private TextView snttProgressClose;
     private LinearLayout snttProgressList;
     private final java.util.ArrayList<SnttRow> snttRows = new java.util.ArrayList<>();
+    private final Runnable snttHidePanelRunnable = () -> {
+        if (snttProgressPanel != null) snttProgressPanel.setVisibility(View.GONE);
+    };
 
     private void buildSnttPage(FrameLayout parent) {
         snttPageOverlay = new FrameLayout(this);
@@ -4784,13 +4794,13 @@ public class MainActivity extends ComponentActivity {
         column.setOrientation(LinearLayout.VERTICAL);
         snttPageOverlay.addView(column, new FrameLayout.LayoutParams(-1, -1));
 
-        // Download panel: shown below the header while SNTT data is downloading
+        // Download panel: sits below the header while SNTT data downloads, hides itself when done
         snttProgressPanel = new LinearLayout(this);
         snttProgressPanel.setOrientation(LinearLayout.VERTICAL);
         snttProgressPanel.setPadding(dp(14), dp(12), dp(14), dp(12));
         GradientDrawable panelBg = new GradientDrawable();
-        panelBg.setColor(Color.rgb(28, 36, 54));
-        panelBg.setCornerRadius(dp(12));
+        panelBg.setColor(Color.rgb(16, 22, 36));
+        panelBg.setCornerRadius(dp(14));
         panelBg.setStroke(dp(1), Color.argb(40, 255, 255, 255));
         snttProgressPanel.setBackground(panelBg);
         snttProgressPanel.setVisibility(View.GONE);
@@ -4832,27 +4842,13 @@ public class MainActivity extends ComponentActivity {
         statusParams.topMargin = dp(6);
         snttProgressPanel.addView(snttProgressStatus, statusParams);
 
-        android.widget.ScrollView listScroll = new android.widget.ScrollView(this);
+        snttListScroll = new ScrollView(this);
         snttProgressList = new LinearLayout(this);
         snttProgressList.setOrientation(LinearLayout.VERTICAL);
-        listScroll.addView(snttProgressList, new FrameLayout.LayoutParams(-1, -2));
-        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, dp(230));
-        listParams.topMargin = dp(8);
-        snttProgressPanel.addView(listScroll, listParams);
-
-        snttProgressClose = new TextView(this);
-        snttProgressClose.setText("বন্ধ করুন");
-        snttProgressClose.setTextColor(Color.rgb(125, 211, 252));
-        snttProgressClose.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
-        snttProgressClose.setTypeface(null, Typeface.BOLD);
-        snttProgressClose.setGravity(Gravity.CENTER);
-        snttProgressClose.setPadding(dp(10), dp(8), dp(10), dp(8));
-        snttProgressClose.setVisibility(View.GONE);
-        snttProgressClose.setOnClickListener(v -> snttProgressPanel.setVisibility(View.GONE));
-        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-2, -2);
-        closeParams.gravity = Gravity.END;
-        closeParams.topMargin = dp(6);
-        snttProgressPanel.addView(snttProgressClose, closeParams);
+        snttListScroll.addView(snttProgressList, new FrameLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, dp(300));
+        listParams.topMargin = dp(10);
+        snttProgressPanel.addView(snttListScroll, listParams);
 
         FrameLayout content = new FrameLayout(this);
         column.addView(content, new LinearLayout.LayoutParams(-1, 0, 1f));
@@ -4895,6 +4891,16 @@ public class MainActivity extends ComponentActivity {
             @Override
             public void showToast(String message) {
                 runOnUiThread(() -> toast(message));
+            }
+
+            @Override
+            public void saveImage(String base64Data, String fileName) {
+                runOnUiThread(() -> saveSnttImage(base64Data, fileName));
+            }
+
+            @Override
+            public void shareImage(String base64Data, String fileName) {
+                runOnUiThread(() -> shareSnttImage(base64Data, fileName));
             }
         });
         snttWebView.addJavascriptInterface(bridge, "TinyDB");
@@ -5013,6 +5019,53 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
+    // ----- Download cards -----
+
+    private GradientDrawable snttCardBackground(int state) {
+        int fill;
+        int stroke;
+        if (state == SNTT_STATE_ACTIVE) {
+            fill = Color.rgb(18, 42, 64);
+            stroke = Color.rgb(56, 189, 248);
+        } else if (state == SnttHome.STATE_OK) {
+            fill = Color.rgb(18, 44, 36);
+            stroke = Color.argb(130, 74, 222, 128);
+        } else if (state == SnttHome.STATE_FAILED) {
+            fill = Color.rgb(54, 24, 30);
+            stroke = Color.argb(150, 248, 113, 113);
+        } else if (state == SnttHome.STATE_SKIPPED) {
+            fill = Color.rgb(30, 36, 48);
+            stroke = Color.argb(60, 255, 255, 255);
+        } else {
+            fill = Color.rgb(26, 33, 49);
+            stroke = Color.argb(40, 255, 255, 255);
+        }
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(fill);
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), stroke);
+        return bg;
+    }
+
+    private SnttRow snttRow(int index) {
+        return (index >= 0 && index < snttRows.size()) ? snttRows.get(index) : null;
+    }
+
+    private void scrollSnttCardIntoView(View card) {
+        card.post(() -> {
+            if (snttListScroll == null) return;
+            int viewport = snttListScroll.getHeight();
+            int target = card.getTop() - Math.max(0, (viewport - card.getHeight()) / 2);
+            snttListScroll.smoothScrollTo(0, Math.max(0, target));
+        });
+    }
+
+    private static String formatSnttBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(Locale.ENGLISH, "%.1f KB", bytes / 1024.0);
+        return String.format(Locale.ENGLISH, "%.2f MB", bytes / (1024.0 * 1024.0));
+    }
+
     private void startSnttDownload() {
         if (snttDownloading) {
             toast("ডাউনলোড চলছে...");
@@ -5023,8 +5076,8 @@ public class MainActivity extends ComponentActivity {
             return;
         }
         snttDownloading = true;
+        snttProgressPanel.removeCallbacks(snttHidePanelRunnable);
         snttProgressPanel.setVisibility(View.VISIBLE);
-        snttProgressClose.setVisibility(View.GONE);
         snttProgressList.removeAllViews();
         snttRows.clear();
         snttProgressBar.setMax(1);
@@ -5032,41 +5085,85 @@ public class MainActivity extends ComponentActivity {
         snttProgressCount.setText("");
         snttProgressStatus.setTextColor(Color.LTGRAY);
         snttProgressStatus.setText("ফাইলের তালিকা আনা হচ্ছে...");
+        snttListScroll.smoothScrollTo(0, 0);
 
         SnttHome.downloadAll(this, new SnttHome.Callback() {
             @Override
             public void onListReady(String[] names) {
                 snttProgressList.removeAllViews();
                 snttRows.clear();
-                for (String name : names) {
-                    LinearLayout row = new LinearLayout(MainActivity.this);
-                    row.setOrientation(LinearLayout.HORIZONTAL);
-                    row.setGravity(Gravity.CENTER_VERTICAL);
-                    row.setPadding(dp(4), dp(8), dp(4), dp(8));
-
+                for (int i = 0; i < names.length; i++) {
                     SnttRow r = new SnttRow();
+
+                    LinearLayout card = new LinearLayout(MainActivity.this);
+                    card.setOrientation(LinearLayout.VERTICAL);
+                    card.setPadding(dp(12), dp(10), dp(12), dp(10));
+                    card.setBackground(snttCardBackground(SNTT_STATE_PENDING));
+                    LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+                    cardParams.bottomMargin = dp(8);
+                    r.card = card;
+
+                    LinearLayout top = new LinearLayout(MainActivity.this);
+                    top.setOrientation(LinearLayout.HORIZONTAL);
+                    top.setGravity(Gravity.CENTER_VERTICAL);
+
+                    TextView badge = new TextView(MainActivity.this);
+                    badge.setText(String.format(Locale.ENGLISH, "%02d", i + 1));
+                    badge.setTextColor(Color.rgb(125, 211, 252));
+                    badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
+                    badge.setTypeface(null, Typeface.BOLD);
+                    badge.setPadding(dp(7), dp(3), dp(7), dp(3));
+                    GradientDrawable badgeBg = new GradientDrawable();
+                    badgeBg.setColor(Color.rgb(14, 34, 52));
+                    badgeBg.setCornerRadius(dp(6));
+                    badge.setBackground(badgeBg);
+                    LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2, -2);
+                    badgeParams.rightMargin = dp(10);
+                    top.addView(badge, badgeParams);
+
+                    TextView nameView = new TextView(MainActivity.this);
+                    nameView.setText(names[i]);
+                    nameView.setTextColor(Color.WHITE);
+                    nameView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+                    nameView.setTypeface(null, Typeface.BOLD);
+                    nameView.setSingleLine(true);
+                    nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    top.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1f));
+
                     r.glyph = new TextView(MainActivity.this);
                     r.glyph.setText("•");
                     r.glyph.setTextColor(Color.GRAY);
-                    r.glyph.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+                    r.glyph.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+                    r.glyph.setTypeface(null, Typeface.BOLD);
                     r.glyph.setGravity(Gravity.CENTER);
-                    row.addView(r.glyph, new LinearLayout.LayoutParams(dp(22), -2));
-
-                    TextView nameView = new TextView(MainActivity.this);
-                    nameView.setText(name);
-                    nameView.setTextColor(Color.WHITE);
-                    nameView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
-                    nameView.setSingleLine(true);
-                    nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                    row.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1f));
+                    top.addView(r.glyph, new LinearLayout.LayoutParams(dp(22), -2));
 
                     r.spinner = new ProgressBar(MainActivity.this);
                     r.spinner.setVisibility(View.GONE);
-                    LinearLayout.LayoutParams spinParams = new LinearLayout.LayoutParams(dp(16), dp(16));
-                    spinParams.leftMargin = dp(6);
-                    row.addView(r.spinner, spinParams);
+                    top.addView(r.spinner, new LinearLayout.LayoutParams(dp(18), dp(18)));
 
-                    snttProgressList.addView(row, new LinearLayout.LayoutParams(-1, -2));
+                    card.addView(top, new LinearLayout.LayoutParams(-1, -2));
+
+                    r.info = new TextView(MainActivity.this);
+                    r.info.setText("অপেক্ষায়");
+                    r.info.setTextColor(Color.rgb(148, 163, 184));
+                    r.info.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+                    r.info.setSingleLine(true);
+                    r.info.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(-1, -2);
+                    infoParams.topMargin = dp(6);
+                    card.addView(r.info, infoParams);
+
+                    r.bar = new ProgressBar(MainActivity.this, null, android.R.attr.progressBarStyleHorizontal);
+                    r.bar.setMax(100);
+                    r.bar.setProgress(0);
+                    r.bar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.rgb(56, 189, 248)));
+                    r.bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.argb(40, 255, 255, 255)));
+                    LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, dp(4));
+                    barParams.topMargin = dp(8);
+                    card.addView(r.bar, barParams);
+
+                    snttProgressList.addView(card, cardParams);
                     snttRows.add(r);
                 }
                 snttProgressBar.setMax(Math.max(1, names.length));
@@ -5077,27 +5174,63 @@ public class MainActivity extends ComponentActivity {
 
             @Override
             public void onItemStart(int index, String name) {
-                if (index < 0 || index >= snttRows.size()) return;
-                SnttRow r = snttRows.get(index);
-                r.glyph.setText("");
+                SnttRow r = snttRow(index);
+                if (r == null) return;
+                r.startedAt = System.currentTimeMillis();
+                r.card.setBackground(snttCardBackground(SNTT_STATE_ACTIVE));
+                r.glyph.setVisibility(View.GONE);
                 r.spinner.setVisibility(View.VISIBLE);
+                r.bar.setIndeterminate(true);
+                r.info.setTextColor(Color.rgb(125, 211, 252));
+                r.info.setText("ডাউনলোড শুরু হচ্ছে...");
+                snttProgressStatus.setTextColor(Color.LTGRAY);
                 snttProgressStatus.setText("ডাউনলোড হচ্ছে: " + name);
+                snttProgressCount.setText((index + 1) + "/" + snttRows.size());
+                scrollSnttCardIntoView(r.card);
             }
 
             @Override
-            public void onItemDone(int index, int state) {
-                if (index < 0 || index >= snttRows.size()) return;
-                SnttRow r = snttRows.get(index);
+            public void onItemProgress(int index, long read, long total) {
+                SnttRow r = snttRow(index);
+                if (r == null) return;
+                if (total > 0) {
+                    int percent = (int) Math.min(100, read * 100 / total);
+                    r.bar.setIndeterminate(false);
+                    r.bar.setProgress(percent);
+                    r.info.setText("ডাউনলোড হচ্ছে • " + formatSnttBytes(read) + " / " + formatSnttBytes(total) + " • " + percent + "%");
+                } else {
+                    r.bar.setIndeterminate(true);
+                    r.info.setText("ডাউনলোড হচ্ছে • " + formatSnttBytes(read));
+                }
+            }
+
+            @Override
+            public void onItemDone(int index, int state, long bytes, String note) {
+                SnttRow r = snttRow(index);
+                if (r == null) return;
                 r.spinner.setVisibility(View.GONE);
+                r.glyph.setVisibility(View.VISIBLE);
+                r.card.setBackground(snttCardBackground(state));
+                r.bar.setIndeterminate(false);
+                double seconds = (System.currentTimeMillis() - r.startedAt) / 1000.0;
                 if (state == SnttHome.STATE_OK) {
                     r.glyph.setText("✓");
                     r.glyph.setTextColor(Color.rgb(74, 222, 128));
+                    r.info.setTextColor(Color.rgb(134, 239, 172));
+                    r.info.setText("সম্পন্ন • " + formatSnttBytes(bytes) + " • " + String.format(Locale.ENGLISH, "%.1fs", seconds));
+                    r.bar.setProgress(100);
                 } else if (state == SnttHome.STATE_FAILED) {
                     r.glyph.setText("✕");
                     r.glyph.setTextColor(Color.rgb(248, 113, 113));
+                    r.info.setTextColor(Color.rgb(252, 165, 165));
+                    r.info.setText("ব্যর্থ • " + (note == null ? "" : note));
+                    r.bar.setProgress(0);
                 } else {
                     r.glyph.setText("–");
                     r.glyph.setTextColor(Color.GRAY);
+                    r.info.setTextColor(Color.rgb(148, 163, 184));
+                    r.info.setText("বাদ • " + (note == null ? "" : note));
+                    r.bar.setProgress(0);
                 }
                 snttProgressBar.setProgress(index + 1);
                 snttProgressCount.setText((index + 1) + "/" + snttRows.size());
@@ -5106,19 +5239,93 @@ public class MainActivity extends ComponentActivity {
             @Override
             public void onFinished(int saved, int failed, int skipped, String error) {
                 snttDownloading = false;
-                snttProgressClose.setVisibility(View.VISIBLE);
                 if (error != null) {
                     snttProgressStatus.setTextColor(Color.rgb(248, 113, 113));
                     snttProgressStatus.setText("ডাউনলোড ব্যর্থ: " + error);
                     toast("ডাউনলোড ব্যর্থ: " + error);
+                    snttProgressPanel.postDelayed(snttHidePanelRunnable, 3000);
                     return;
                 }
                 snttProgressStatus.setTextColor(Color.rgb(74, 222, 128));
                 snttProgressStatus.setText("সম্পন্ন: " + saved + "টি সংরক্ষিত, " + failed + "টি ব্যর্থ, " + skipped + "টি বাদ");
-                toast("ডাউনলোড সম্পন্ন: " + saved + "টি সংরক্ষিত");
+                toast("ডাউনলোড সম্পন্ন: " + saved + "টি সংরক্ষিত" + (failed > 0 ? ", " + failed + "টি ব্যর্থ" : ""));
                 if (snttPageOpen && snttOnHome) loadSnttHome();
+                // All files processed: hide the layout automatically
+                snttProgressPanel.postDelayed(snttHidePanelRunnable, 1800);
             }
         });
+    }
+
+    // ----- Screenshot save / share (ASTM, Advance Oil, Calibration pages) -----
+
+    private static String safeSnttFileName(String name, String fallback) {
+        String base = (name == null || name.trim().isEmpty()) ? fallback : name.trim();
+        base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (!base.toLowerCase(Locale.ROOT).endsWith(".png")) base += ".png";
+        return base;
+    }
+
+    private void saveSnttImage(String base64Data, String fileName) {
+        try {
+            byte[] bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT);
+            String safeName = safeSnttFileName(fileName, "SNTT_Screenshot.png");
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                android.content.ContentValues values = new android.content.ContentValues();
+                values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, safeName);
+                values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png");
+                values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_PICTURES + "/SNTT");
+                values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 1);
+                Uri uri = getContentResolver().insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                if (uri == null) throw new IllegalStateException("ফাইল তৈরি করা যায়নি");
+                try (java.io.OutputStream out = getContentResolver().openOutputStream(uri)) {
+                    if (out == null) throw new IllegalStateException("ফাইল খোলা যায়নি");
+                    out.write(bytes);
+                }
+                values.clear();
+                values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0);
+                getContentResolver().update(uri, values, null, null);
+                toast("ছবি Pictures/SNTT ফোল্ডারে সেভ হয়েছে");
+            } else {
+                // Android 9 and older: needs the storage permission, otherwise use the app's own Pictures folder
+                boolean granted = androidx.core.content.ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+                java.io.File base = granted
+                        ? android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES)
+                        : getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
+                java.io.File dir = new java.io.File(base, "SNTT");
+                if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("ফোল্ডার তৈরি করা যায়নি");
+                java.io.File file = new java.io.File(dir, safeName);
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                    out.write(bytes);
+                }
+                android.media.MediaScannerConnection.scanFile(this, new String[]{file.getAbsolutePath()}, new String[]{"image/png"}, null);
+                toast("ছবি সেভ হয়েছে: " + file.getAbsolutePath());
+            }
+        } catch (Exception e) {
+            toast("ছবি সেভ হয়নি: " + e.getMessage());
+        }
+    }
+
+    private void shareSnttImage(String base64Data, String fileName) {
+        try {
+            byte[] bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT);
+            String safeName = safeSnttFileName(fileName, "SNTT_Screenshot.png");
+            java.io.File dir = new java.io.File(getCacheDir(), "shared_images");
+            if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("শেয়ার ফোল্ডার তৈরি করা যায়নি");
+            java.io.File file = new java.io.File(dir, safeName);
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                out.write(bytes);
+            }
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", file);
+            Intent intent = new Intent(Intent.ACTION_SEND);
+            intent.setType("image/png");
+            intent.putExtra(Intent.EXTRA_STREAM, uri);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(intent, "ছবি শেয়ার করুন"));
+        } catch (Exception e) {
+            toast("শেয়ার খোলা যায়নি: " + e.getMessage());
+        }
     }
 
     private void registerSnttNetworkWatch() {
