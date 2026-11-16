@@ -217,6 +217,16 @@ public class MainActivity extends ComponentActivity {
     private ProgressBar bufferingProgress;
     private View reloadIconView;
 
+    // ===== SNTT page (merged from SNTT App Build) =====
+    private FrameLayout snttPageOverlay;
+    private WebView snttWebView;
+    private TextView snttPageStatus;
+    private FrameLayout snttDownloadBtn;
+    private FrameLayout reloadBtnView;
+    private boolean snttPageOpen = false;
+    private boolean snttDownloading = false;
+    private ConnectivityManager.NetworkCallback snttNetCallback;
+
     // Splash Screen & Deep Link
     // In-App Miniplayer (Floating PiP inside app)
     private FrameLayout mainAppContainer;
@@ -409,7 +419,9 @@ public class MainActivity extends ComponentActivity {
                 new OnBackPressedCallback(true) {
                     @Override
                     public void handleOnBackPressed() {
-                        if (downloadPageOverlay != null && downloadPageOverlay.getVisibility() == View.VISIBLE) {
+                        if (snttPageOpen) {
+                            hideSnttPage();
+                        } else if (downloadPageOverlay != null && downloadPageOverlay.getVisibility() == View.VISIBLE) {
                             hideDownloadPage();
                         } else if (splashLayout != null && splashLayout.getVisibility() == View.VISIBLE && !isSplashDismissed) {
                             dismissSplashScreen();
@@ -568,6 +580,7 @@ public class MainActivity extends ComponentActivity {
         reloadParams.rightMargin = dp(8);
         topBarLayout.addView(reloadBtn, reloadParams);
         reloadBtn.setOnClickListener(v -> reloadWebView());
+        reloadBtnView = reloadBtn;
 
         // 3. Search / Close Toggle Button on the far right
         searchToggleBtn = new FrameLayout(this);
@@ -601,6 +614,27 @@ public class MainActivity extends ComponentActivity {
         topBarLayout.addView(searchToggleBtn, toggleParams);
 
         searchToggleBtn.setOnClickListener(v -> toggleSearch());
+
+        // SNTT download icon: only visible on the SNTT page while online
+        snttDownloadBtn = new FrameLayout(this);
+        snttDownloadBtn.setFocusable(true);
+        snttDownloadBtn.setClickable(true);
+        GradientDrawable dlBg = new GradientDrawable();
+        dlBg.setColor(Color.argb(160, 35, 48, 67));
+        dlBg.setCornerRadius(dp(8));
+        snttDownloadBtn.setBackground(dlBg);
+        ImageView dlIcon = new ImageView(this);
+        dlIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        dlIcon.setColorFilter(Color.WHITE);
+        dlIcon.setPadding(dp(7), dp(7), dp(7), dp(7));
+        dlIcon.setImageResource(R.drawable.ic_download);
+        snttDownloadBtn.addView(dlIcon, new FrameLayout.LayoutParams(-1, -1));
+        snttDownloadBtn.setContentDescription("Download SNTT data");
+        snttDownloadBtn.setVisibility(View.GONE);
+        snttDownloadBtn.setOnClickListener(v -> startSnttDownload());
+        LinearLayout.LayoutParams snttDlParams = new LinearLayout.LayoutParams(dp(34), dp(34));
+        snttDlParams.leftMargin = dp(8);
+        topBarLayout.addView(snttDownloadBtn, snttDlParams);
 
         rootLayout.addView(topBarLayout, new LinearLayout.LayoutParams(-1, dp(42)));
 
@@ -727,6 +761,7 @@ public class MainActivity extends ComponentActivity {
         webContentContainer.addView(playlistWebView, new FrameLayout.LayoutParams(-1, -1));
 
         buildDownloadPage(webContentContainer);
+        buildSnttPage(webContentContainer);
 
         inputScroll.addView(webContentContainer, webContainerParams);
 
@@ -2313,6 +2348,7 @@ public class MainActivity extends ComponentActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        registerSnttNetworkWatch();
         refreshControlsVisibility();
         if (fullscreen && !isInPipMode()) {
             applyFullscreenSystemUi(true);
@@ -2661,6 +2697,11 @@ public class MainActivity extends ComponentActivity {
         addSideMenuRow("Downloads", () -> {
             closeSideMenu();
             showDownloadPage();
+        });
+
+        addSideMenuRow("SNTT App", () -> {
+            closeSideMenu();
+            showSnttPage();
         });
 
         TextView videoSection = new TextView(this);
@@ -4701,6 +4742,169 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
+
+    // ==========================================
+    // SNTT PAGE (side menu entry)
+    // ==========================================
+
+    private void buildSnttPage(FrameLayout parent) {
+        snttPageOverlay = new FrameLayout(this);
+        snttPageOverlay.setBackgroundColor(BG_COLOR);
+        snttPageOverlay.setClickable(true);
+        snttPageOverlay.setVisibility(View.GONE);
+
+        snttWebView = new WebView(this);
+        WebSettings s = snttWebView.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setAllowFileAccess(true);
+        s.setAllowFileAccessFromFileURLs(true);
+        s.setAllowUniversalAccessFromFileURLs(true);
+        s.setUseWideViewPort(true);
+        s.setLoadWithOverviewMode(true);
+        s.setSupportZoom(true);
+        s.setBuiltInZoomControls(true);
+        s.setDisplayZoomControls(false);
+        snttWebView.setWebViewClient(new WebViewClient());
+        snttPageOverlay.addView(snttWebView, new FrameLayout.LayoutParams(-1, -1));
+
+        snttPageStatus = new TextView(this);
+        snttPageStatus.setBackgroundColor(BG_COLOR);
+        snttPageStatus.setTextColor(Color.LTGRAY);
+        snttPageStatus.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        snttPageStatus.setGravity(Gravity.CENTER);
+        snttPageStatus.setPadding(dp(20), dp(20), dp(20), dp(20));
+        snttPageStatus.setVisibility(View.GONE);
+        snttPageOverlay.addView(snttPageStatus, new FrameLayout.LayoutParams(-1, -1));
+
+        parent.addView(snttPageOverlay, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void showSnttPage() {
+        if (snttPageOverlay == null) return;
+        if (isDownloadPageShowing()) hideDownloadPage();
+        if (!isMiniPlayerActive && player != null && playerContainer != null
+                && playerContainer.getVisibility() == View.VISIBLE) {
+            enterInAppMiniPlayer();
+        }
+        if (fullscreen) toggleFullscreen();
+        if (inputScroll != null) inputScroll.setVisibility(View.VISIBLE);
+        if (eventWebView != null) eventWebView.setVisibility(View.GONE);
+        if (playlistWebView != null) playlistWebView.setVisibility(View.GONE);
+
+        snttPageOpen = true;
+        applySnttHeader();
+        loadSnttHome();
+        snttPageOverlay.setVisibility(View.VISIBLE);
+    }
+
+    private void hideSnttPage() {
+        snttPageOpen = false;
+        if (snttPageOverlay != null) snttPageOverlay.setVisibility(View.GONE);
+        if (playlistWebView != null) {
+            playlistWebView.setVisibility(isPlaylistViewActive ? View.VISIBLE : View.GONE);
+        }
+        if (eventWebView != null) {
+            eventWebView.setVisibility(isPlaylistViewActive ? View.GONE : View.VISIBLE);
+        }
+        applySnttHeader();
+    }
+
+    // On the SNTT page only the download icon stays in the header (and only when online)
+    private void applySnttHeader() {
+        boolean on = snttPageOpen;
+        if (on && isSearchOpen) closeSearch();
+        int normal = on ? View.GONE : View.VISIBLE;
+        if (reloadBtnView != null) reloadBtnView.setVisibility(normal);
+        if (searchToggleBtn != null) searchToggleBtn.setVisibility(normal);
+        if (searchEditText != null && on) searchEditText.setVisibility(View.GONE);
+        if (snttDownloadBtn != null) {
+            snttDownloadBtn.setVisibility(on && isNetworkAvailable() ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private void loadSnttHome() {
+        if (snttWebView == null) return;
+        String html = SnttHome.loadHome(this);
+        if (html == null || html.trim().isEmpty()) {
+            snttWebView.loadUrl("about:blank");
+            snttPageStatus.setText("এখনো কোনো কনটেন্ট নেই।\nউপরের ডাউনলোড আইকনে চাপুন।");
+            snttPageStatus.setVisibility(View.VISIBLE);
+        } else {
+            snttPageStatus.setVisibility(View.GONE);
+            snttWebView.loadDataWithBaseURL("https://sntt.local/", html, "text/html", "UTF-8", null);
+        }
+    }
+
+    private void startSnttDownload() {
+        if (snttDownloading) {
+            toast("ডাউনলোড চলছে...");
+            return;
+        }
+        if (!isNetworkAvailable()) {
+            toast("ইন্টারনেট সংযোগ নেই");
+            return;
+        }
+        snttDownloading = true;
+        snttPageStatus.setText("ডাউনলোড শুরু হচ্ছে...");
+        snttPageStatus.setVisibility(View.VISIBLE);
+        SnttHome.downloadAll(this, new SnttHome.Callback() {
+            @Override
+            public void onProgress(int done, int total, String name) {
+                snttPageStatus.setText("ডাউনলোড হচ্ছে (" + (done + 1) + "/" + total + ")\n" + name);
+                snttPageStatus.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void onFinished(int saved, int failed, int skipped, String error) {
+                snttDownloading = false;
+                if (error != null) {
+                    toast("ডাউনলোড ব্যর্থ: " + error);
+                    snttPageStatus.setText("ডাউনলোড ব্যর্থ: " + error);
+                    snttPageStatus.setVisibility(View.VISIBLE);
+                    return;
+                }
+                toast("ডাউনলোড সম্পন্ন: " + saved + "টি সংরক্ষিত, " + failed + "টি ব্যর্থ");
+                if (snttPageOpen) loadSnttHome();
+            }
+        });
+    }
+
+    private void registerSnttNetworkWatch() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null || snttNetCallback != null) return;
+        snttNetCallback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(android.net.Network network) {
+                runOnUiThread(() -> new Handler(Looper.getMainLooper()).postDelayed(MainActivity.this::applySnttHeader, 300));
+            }
+
+            @Override
+            public void onLost(android.net.Network network) {
+                runOnUiThread(() -> new Handler(Looper.getMainLooper()).postDelayed(MainActivity.this::applySnttHeader, 300));
+            }
+        };
+        try {
+            cm.registerNetworkCallback(
+                    new android.net.NetworkRequest.Builder()
+                            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                            .build(),
+                    snttNetCallback);
+        } catch (Exception ignored) {
+            snttNetCallback = null;
+        }
+    }
+
+    private void unregisterSnttNetworkWatch() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm != null && snttNetCallback != null) {
+            try {
+                cm.unregisterNetworkCallback(snttNetCallback);
+            } catch (Exception ignored) {}
+        }
+        snttNetCallback = null;
+    }
+
     private boolean isNetworkAvailable() {
         try {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -4750,6 +4954,7 @@ public class MainActivity extends ComponentActivity {
     @Override
     protected void onStop() {
         super.onStop();
+        unregisterSnttNetworkWatch();
         if (player != null && !isInPipMode()) {
             player.pause();
         }
