@@ -230,6 +230,8 @@ public class MainActivity extends ComponentActivity {
     private FrameLayout reloadBtnView;
     private boolean snttPageOpen = false;
     private boolean snttDownloading = false;
+    private long lastExitBackAt = 0;
+    private FrameLayout snttFolderBtn;
     private ConnectivityManager.NetworkCallback snttNetCallback;
 
     // Splash Screen & Deep Link
@@ -429,7 +431,9 @@ public class MainActivity extends ComponentActivity {
                         } else if (isOfflineChoiceShowing()) {
                             hideOfflineChoice();
                         } else if (snttPageOpen) {
-                            if (!snttOnHome) {
+                            if (snttProgressPanel != null && snttProgressPanel.getVisibility() == View.VISIBLE && !snttDownloading) {
+                                snttHidePanelRunnable.run();
+                            } else if (!snttOnHome) {
                                 loadSnttHome();
                             } else {
                                 hideSnttPage();
@@ -463,7 +467,13 @@ public class MainActivity extends ComponentActivity {
                         } else if (eventWebView != null && eventWebView.canGoBack()) {
                             eventWebView.goBack();
                         } else {
-                            finish();
+                            long nowBack = System.currentTimeMillis();
+                            if (nowBack - lastExitBackAt < 2000) {
+                                finish();
+                            } else {
+                                lastExitBackAt = nowBack;
+                                toast("আরেকবার ব্যাক চাপলে অ্যাপ থেকে বের হবে");
+                            }
                         }
                     }
                 }
@@ -625,6 +635,27 @@ public class MainActivity extends ComponentActivity {
         topBarLayout.addView(searchToggleBtn, toggleParams);
 
         searchToggleBtn.setOnClickListener(v -> toggleSearch());
+
+        // SNTT folder icon: switches between the download list and the SNTT web view
+        snttFolderBtn = new FrameLayout(this);
+        snttFolderBtn.setFocusable(true);
+        snttFolderBtn.setClickable(true);
+        GradientDrawable folderBg = new GradientDrawable();
+        folderBg.setColor(Color.argb(160, 35, 48, 67));
+        folderBg.setCornerRadius(dp(8));
+        snttFolderBtn.setBackground(folderBg);
+        ImageView folderIcon = new ImageView(this);
+        folderIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        folderIcon.setColorFilter(Color.WHITE);
+        folderIcon.setPadding(dp(7), dp(7), dp(7), dp(7));
+        folderIcon.setImageResource(R.drawable.ic_folder);
+        snttFolderBtn.addView(folderIcon, new FrameLayout.LayoutParams(-1, -1));
+        snttFolderBtn.setContentDescription("Show SNTT download list or web view");
+        snttFolderBtn.setVisibility(View.GONE);
+        snttFolderBtn.setOnClickListener(v -> toggleSnttDownloadList());
+        LinearLayout.LayoutParams snttFolderParams = new LinearLayout.LayoutParams(dp(34), dp(34));
+        snttFolderParams.leftMargin = dp(8);
+        topBarLayout.addView(snttFolderBtn, snttFolderParams);
 
         // SNTT download icon: only visible on the SNTT page while online
         snttDownloadBtn = new FrameLayout(this);
@@ -5195,6 +5226,35 @@ public class MainActivity extends ComponentActivity {
         if (snttDownloadBtn != null) {
             snttDownloadBtn.setVisibility(on && isNetworkAvailable() ? View.VISIBLE : View.GONE);
         }
+        // The folder icon exists only on the SNTT page
+        if (snttFolderBtn != null) {
+            snttFolderBtn.setVisibility(on ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    // Folder icon: first tap shows the download list (web view hides), next tap shows the SNTT web view again
+    private void toggleSnttDownloadList() {
+        if (snttDownloading) {
+            toast("ডাউনলোড চলছে...");
+            return;
+        }
+        boolean listShowing = snttProgressPanel != null && snttProgressPanel.getVisibility() == View.VISIBLE;
+        if (listShowing) {
+            snttHidePanelRunnable.run();
+            return;
+        }
+        if (!SnttHome.hasTag(this, SnttHome.HOME_TAG)) {
+            toast("SNTT HOME UI এখনো ডাউনলোড হয়নি। উপরের ডাউনলোড আইকনে চাপুন।");
+            return;
+        }
+        snttProgressPanel.removeCallbacks(snttHidePanelRunnable);
+        if (snttRows.isEmpty()) {
+            snttProgressCount.setText("");
+            snttProgressStatus.setTextColor(Color.LTGRAY);
+            snttProgressStatus.setText("এই সেশনে কোনো ডাউনলোড তালিকা নেই। ডাউনলোড আইকনে চাপলে তালিকা দেখা যাবে।");
+        }
+        snttWebView.setVisibility(View.GONE);
+        snttProgressPanel.setVisibility(View.VISIBLE);
     }
 
     private void loadSnttHome() {
@@ -5453,7 +5513,8 @@ public class MainActivity extends ComponentActivity {
                     r.glyph.setText("✓");
                     r.glyph.setTextColor(Color.rgb(74, 222, 128));
                     r.info.setTextColor(Color.rgb(134, 239, 172));
-                    r.info.setText("সম্পন্ন • " + formatSnttBytes(bytes) + " • " + String.format(Locale.ENGLISH, "%.1fs", seconds));
+                    String doneAt = new java.text.SimpleDateFormat("hh:mm a", Locale.ENGLISH).format(new java.util.Date());
+                    r.info.setText("সম্পন্ন • " + formatSnttBytes(bytes) + " • " + String.format(Locale.ENGLISH, "%.1fs", seconds) + " • " + doneAt);
                     r.bar.setProgress(100);
                 } else if (state == SnttHome.STATE_FAILED) {
                     r.glyph.setText("✕");
