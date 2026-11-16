@@ -107,3 +107,11 @@ GitHub Secrets (repo Settings > Secrets and variables > Actions):
 - SNTT page buttons work again: tool cards and calibration cards call the same bridge names the SNTT HTML uses (Android / TinyDB / AppInventor) via SnttBridge.java.
 - Header download icon (SNTT page only, online only) shows a progress panel: overall bar, counter, and a list of file names with live status (spinner, check, cross).
 - Pending device test: tool cards, ship calibration, back from a tool to HOME, download panel, portrait/landscape layout.
+
+6. সর্বশেষ পরিবর্তন (16 Nov 2026)
+--------------------------------
+- Back বাটন: side menu খোলা থাকলে আগে side menu বন্ধ হবে, তারপর বাকি back কাজ
+- Offline খুললে একটি card আসবে: Downloads ও SNTT HOME UI বাটন, "পরে" দিয়ে বন্ধ
+- Side menu-র title-এর বাম পাশে hide আইকন (ic_side_menu_hide) যোগ; চাপলে menu বন্ধ
+- ভিডিও লিংক না চললে player-এর মাঝখানের card-এ "ভিডিও লিংক চলছে না" দেখায়
+- পরীক্ষা বাকি: এই পরিবর্তনগুলো ফোনে এখনো যাচাই হয়নি
