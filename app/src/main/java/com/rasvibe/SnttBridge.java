@@ -19,6 +19,8 @@ final class SnttBridge {
         void goHome();
         void startDownload();
         void showToast(String message);
+        void saveImage(String base64Data, String fileName);
+        void shareImage(String base64Data, String fileName);
     }
 
     private final Context context;
@@ -107,6 +109,16 @@ final class SnttBridge {
     @JavascriptInterface
     public void showToast(String message) {
         host.showToast(message);
+    }
+
+    @JavascriptInterface
+    public void saveImage(String base64Data, String fileName) {
+        host.saveImage(base64Data, fileName);
+    }
+
+    @JavascriptInterface
+    public void shareImage(String base64Data, String fileName) {
+        host.shareImage(base64Data, fileName);
     }
 
     @JavascriptInterface
