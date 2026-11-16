@@ -2977,6 +2977,7 @@ public class MainActivity extends ComponentActivity {
         playerTitleView.setTextColor(Color.WHITE);
         playerTitleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
         playerTitleView.setTypeface(null, Typeface.BOLD);
+        playerTitleView.setSingleLine(true);
         playerTitleView.setMaxLines(1);
         playerTitleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         playerTitleView.setPadding(dp(14), dp(10), dp(14), dp(22));
@@ -2996,7 +2997,9 @@ public class MainActivity extends ComponentActivity {
                 && controlsOn
                 && !isInPipMode() && !isMiniPlayerActive
                 && playerContainer != null && playerContainer.getVisibility() == View.VISIBLE;
-        playerTitleView.setText(playerOverlayTitle == null ? "" : playerOverlayTitle.trim());
+        // One line only: newlines and extra spaces from the web page are flattened
+        String oneLine = playerOverlayTitle == null ? "" : playerOverlayTitle.replaceAll("\\s+", " ").trim();
+        playerTitleView.setText(oneLine);
         playerTitleView.setVisibility(show ? View.VISIBLE : View.GONE);
         syncPlayerTitleLayout();
     }
