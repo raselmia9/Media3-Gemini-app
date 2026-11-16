@@ -420,7 +420,11 @@ public class MainActivity extends ComponentActivity {
                     @Override
                     public void handleOnBackPressed() {
                         if (snttPageOpen) {
-                            hideSnttPage();
+                            if (!snttOnHome) {
+                                loadSnttHome();
+                            } else {
+                                hideSnttPage();
+                            }
                         } else if (downloadPageOverlay != null && downloadPageOverlay.getVisibility() == View.VISIBLE) {
                             hideDownloadPage();
                         } else if (splashLayout != null && splashLayout.getVisibility() == View.VISIBLE && !isSplashDismissed) {
@@ -2702,7 +2706,7 @@ public class MainActivity extends ComponentActivity {
         offlineSection.setPadding(dp(4), 0, 0, dp(8));
         sideMenuPanel.addView(offlineSection, new LinearLayout.LayoutParams(-1, -2));
 
-        addSideMenuRow("SNTT Room UI", () -> {
+        addSideMenuRow("SNTT HOME UI", () -> {
             closeSideMenu();
             showSnttPage();
         });
@@ -4755,11 +4759,103 @@ public class MainActivity extends ComponentActivity {
     // SNTT PAGE (side menu entry)
     // ==========================================
 
+    // ===== SNTT page: opened from the side menu, controlled from the RasVibe header =====
+    private static final class SnttRow {
+        TextView glyph;
+        ProgressBar spinner;
+    }
+
+    private boolean snttOnHome = true;
+    private LinearLayout snttProgressPanel;
+    private ProgressBar snttProgressBar;
+    private TextView snttProgressCount;
+    private TextView snttProgressStatus;
+    private TextView snttProgressClose;
+    private LinearLayout snttProgressList;
+    private final java.util.ArrayList<SnttRow> snttRows = new java.util.ArrayList<>();
+
     private void buildSnttPage(FrameLayout parent) {
         snttPageOverlay = new FrameLayout(this);
         snttPageOverlay.setBackgroundColor(BG_COLOR);
         snttPageOverlay.setClickable(true);
         snttPageOverlay.setVisibility(View.GONE);
+
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        snttPageOverlay.addView(column, new FrameLayout.LayoutParams(-1, -1));
+
+        // Download panel: shown below the header while SNTT data is downloading
+        snttProgressPanel = new LinearLayout(this);
+        snttProgressPanel.setOrientation(LinearLayout.VERTICAL);
+        snttProgressPanel.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(Color.rgb(28, 36, 54));
+        panelBg.setCornerRadius(dp(12));
+        panelBg.setStroke(dp(1), Color.argb(40, 255, 255, 255));
+        snttProgressPanel.setBackground(panelBg);
+        snttProgressPanel.setVisibility(View.GONE);
+        LinearLayout.LayoutParams panelParams = new LinearLayout.LayoutParams(-1, -2);
+        panelParams.setMargins(dp(10), dp(10), dp(10), dp(6));
+        column.addView(snttProgressPanel, panelParams);
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("SNTT ডাউনলোড");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        title.setTypeface(null, Typeface.BOLD);
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        snttProgressCount = new TextView(this);
+        snttProgressCount.setTextColor(Color.rgb(125, 211, 252));
+        snttProgressCount.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+        snttProgressCount.setTypeface(null, Typeface.BOLD);
+        titleRow.addView(snttProgressCount, new LinearLayout.LayoutParams(-2, -2));
+        snttProgressPanel.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+
+        snttProgressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        snttProgressBar.setMax(1);
+        snttProgressBar.setProgress(0);
+        snttProgressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.rgb(56, 189, 248)));
+        snttProgressBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.argb(40, 255, 255, 255)));
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, dp(8));
+        barParams.topMargin = dp(8);
+        snttProgressPanel.addView(snttProgressBar, barParams);
+
+        snttProgressStatus = new TextView(this);
+        snttProgressStatus.setTextColor(Color.LTGRAY);
+        snttProgressStatus.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        snttProgressStatus.setSingleLine(true);
+        snttProgressStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
+        statusParams.topMargin = dp(6);
+        snttProgressPanel.addView(snttProgressStatus, statusParams);
+
+        android.widget.ScrollView listScroll = new android.widget.ScrollView(this);
+        snttProgressList = new LinearLayout(this);
+        snttProgressList.setOrientation(LinearLayout.VERTICAL);
+        listScroll.addView(snttProgressList, new FrameLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, dp(230));
+        listParams.topMargin = dp(8);
+        snttProgressPanel.addView(listScroll, listParams);
+
+        snttProgressClose = new TextView(this);
+        snttProgressClose.setText("বন্ধ করুন");
+        snttProgressClose.setTextColor(Color.rgb(125, 211, 252));
+        snttProgressClose.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+        snttProgressClose.setTypeface(null, Typeface.BOLD);
+        snttProgressClose.setGravity(Gravity.CENTER);
+        snttProgressClose.setPadding(dp(10), dp(8), dp(10), dp(8));
+        snttProgressClose.setVisibility(View.GONE);
+        snttProgressClose.setOnClickListener(v -> snttProgressPanel.setVisibility(View.GONE));
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-2, -2);
+        closeParams.gravity = Gravity.END;
+        closeParams.topMargin = dp(6);
+        snttProgressPanel.addView(snttProgressClose, closeParams);
+
+        FrameLayout content = new FrameLayout(this);
+        column.addView(content, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         snttWebView = new WebView(this);
         WebSettings s = snttWebView.getSettings();
@@ -4774,7 +4870,37 @@ public class MainActivity extends ComponentActivity {
         s.setBuiltInZoomControls(true);
         s.setDisplayZoomControls(false);
         snttWebView.setWebViewClient(new WebViewClient());
-        snttPageOverlay.addView(snttWebView, new FrameLayout.LayoutParams(-1, -1));
+
+        SnttBridge bridge = new SnttBridge(getApplicationContext(), new SnttBridge.Host() {
+            @Override
+            public void openTool(String tag) {
+                runOnUiThread(() -> openSnttTool(tag));
+            }
+
+            @Override
+            public void openShip(String shipJson) {
+                runOnUiThread(() -> openSnttShip(shipJson));
+            }
+
+            @Override
+            public void goHome() {
+                runOnUiThread(() -> loadSnttHome());
+            }
+
+            @Override
+            public void startDownload() {
+                runOnUiThread(() -> startSnttDownload());
+            }
+
+            @Override
+            public void showToast(String message) {
+                runOnUiThread(() -> toast(message));
+            }
+        });
+        snttWebView.addJavascriptInterface(bridge, "TinyDB");
+        snttWebView.addJavascriptInterface(bridge, "Android");
+        snttWebView.addJavascriptInterface(bridge, "AppInventor");
+        content.addView(snttWebView, new FrameLayout.LayoutParams(-1, -1));
 
         snttPageStatus = new TextView(this);
         snttPageStatus.setBackgroundColor(BG_COLOR);
@@ -4783,7 +4909,7 @@ public class MainActivity extends ComponentActivity {
         snttPageStatus.setGravity(Gravity.CENTER);
         snttPageStatus.setPadding(dp(20), dp(20), dp(20), dp(20));
         snttPageStatus.setVisibility(View.GONE);
-        snttPageOverlay.addView(snttPageStatus, new FrameLayout.LayoutParams(-1, -1));
+        content.addView(snttPageStatus, new FrameLayout.LayoutParams(-1, -1));
 
         parent.addView(snttPageOverlay, new FrameLayout.LayoutParams(-1, -1));
     }
@@ -4833,6 +4959,7 @@ public class MainActivity extends ComponentActivity {
 
     private void loadSnttHome() {
         if (snttWebView == null) return;
+        snttOnHome = true;
         String html = SnttHome.loadHome(this);
         if (html == null || html.trim().isEmpty()) {
             snttWebView.loadUrl("about:blank");
@@ -4841,6 +4968,48 @@ public class MainActivity extends ComponentActivity {
         } else {
             snttPageStatus.setVisibility(View.GONE);
             snttWebView.loadDataWithBaseURL("https://sntt.local/", html, "text/html", "UTF-8", null);
+        }
+    }
+
+    private void openSnttTool(String tag) {
+        String html = SnttHome.getValue(this, tag, "");
+        if (html.isEmpty()) {
+            toast("এই টুলটি এখনো ডাউনলোড হয়নি। উপরের ডাউনলোড আইকনে চাপুন।");
+            return;
+        }
+        snttOnHome = false;
+        snttPageStatus.setVisibility(View.GONE);
+        snttWebView.loadDataWithBaseURL("https://sntt.local/", html, "text/html", "UTF-8", null);
+    }
+
+    private void openSnttShip(String shipJson) {
+        try {
+            org.json.JSONObject obj = new org.json.JSONObject(shipJson);
+            String shipName = obj.optString("Ship Name", "").trim();
+            if ("SNTT All Tank".equalsIgnoreCase(shipName)) {
+                openSnttTool(SnttHome.ALL_TANK_TAG);
+                return;
+            }
+            int tankCount = obj.optInt("Tank C", 8);
+            String template = SnttHome.getValue(this, SnttHome.CALIBRATION_TAG, "");
+            if (template.isEmpty()) {
+                toast("Ship Calibration এখনো ডাউনলোড হয়নি। আগে ডাউনলোড করুন।");
+                return;
+            }
+            String shipData = SnttHome.getValue(this, shipName, "");
+            if (shipData.isEmpty()) {
+                toast("'" + shipName + "' এর ডাটা পাওয়া যায়নি। আগে ডাউনলোড করুন।");
+                return;
+            }
+            String populated = template
+                    .replace("?Ship Name?", shipName)
+                    .replace("...Total Tank...", String.valueOf(tankCount))
+                    .replace("/*PUT_JSON_STRING_HERE*/", shipData);
+            snttOnHome = false;
+            snttPageStatus.setVisibility(View.GONE);
+            snttWebView.loadDataWithBaseURL("https://sntt.local/", populated, "text/html", "UTF-8", null);
+        } catch (Exception e) {
+            toast("Ship selection error: " + e.getMessage());
         }
     }
 
@@ -4854,26 +5023,100 @@ public class MainActivity extends ComponentActivity {
             return;
         }
         snttDownloading = true;
-        snttPageStatus.setText("ডাউনলোড শুরু হচ্ছে...");
-        snttPageStatus.setVisibility(View.VISIBLE);
+        snttProgressPanel.setVisibility(View.VISIBLE);
+        snttProgressClose.setVisibility(View.GONE);
+        snttProgressList.removeAllViews();
+        snttRows.clear();
+        snttProgressBar.setMax(1);
+        snttProgressBar.setProgress(0);
+        snttProgressCount.setText("");
+        snttProgressStatus.setTextColor(Color.LTGRAY);
+        snttProgressStatus.setText("ফাইলের তালিকা আনা হচ্ছে...");
+
         SnttHome.downloadAll(this, new SnttHome.Callback() {
             @Override
-            public void onProgress(int done, int total, String name) {
-                snttPageStatus.setText("ডাউনলোড হচ্ছে (" + (done + 1) + "/" + total + ")\n" + name);
-                snttPageStatus.setVisibility(View.VISIBLE);
+            public void onListReady(String[] names) {
+                snttProgressList.removeAllViews();
+                snttRows.clear();
+                for (String name : names) {
+                    LinearLayout row = new LinearLayout(MainActivity.this);
+                    row.setOrientation(LinearLayout.HORIZONTAL);
+                    row.setGravity(Gravity.CENTER_VERTICAL);
+                    row.setPadding(dp(4), dp(8), dp(4), dp(8));
+
+                    SnttRow r = new SnttRow();
+                    r.glyph = new TextView(MainActivity.this);
+                    r.glyph.setText("•");
+                    r.glyph.setTextColor(Color.GRAY);
+                    r.glyph.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+                    r.glyph.setGravity(Gravity.CENTER);
+                    row.addView(r.glyph, new LinearLayout.LayoutParams(dp(22), -2));
+
+                    TextView nameView = new TextView(MainActivity.this);
+                    nameView.setText(name);
+                    nameView.setTextColor(Color.WHITE);
+                    nameView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+                    nameView.setSingleLine(true);
+                    nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    row.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1f));
+
+                    r.spinner = new ProgressBar(MainActivity.this);
+                    r.spinner.setVisibility(View.GONE);
+                    LinearLayout.LayoutParams spinParams = new LinearLayout.LayoutParams(dp(16), dp(16));
+                    spinParams.leftMargin = dp(6);
+                    row.addView(r.spinner, spinParams);
+
+                    snttProgressList.addView(row, new LinearLayout.LayoutParams(-1, -2));
+                    snttRows.add(r);
+                }
+                snttProgressBar.setMax(Math.max(1, names.length));
+                snttProgressBar.setProgress(0);
+                snttProgressCount.setText("0/" + names.length);
+                snttProgressStatus.setText("মোট " + names.length + "টি ফাইল, ডাউনলোড শুরু হচ্ছে...");
+            }
+
+            @Override
+            public void onItemStart(int index, String name) {
+                if (index < 0 || index >= snttRows.size()) return;
+                SnttRow r = snttRows.get(index);
+                r.glyph.setText("");
+                r.spinner.setVisibility(View.VISIBLE);
+                snttProgressStatus.setText("ডাউনলোড হচ্ছে: " + name);
+            }
+
+            @Override
+            public void onItemDone(int index, int state) {
+                if (index < 0 || index >= snttRows.size()) return;
+                SnttRow r = snttRows.get(index);
+                r.spinner.setVisibility(View.GONE);
+                if (state == SnttHome.STATE_OK) {
+                    r.glyph.setText("✓");
+                    r.glyph.setTextColor(Color.rgb(74, 222, 128));
+                } else if (state == SnttHome.STATE_FAILED) {
+                    r.glyph.setText("✕");
+                    r.glyph.setTextColor(Color.rgb(248, 113, 113));
+                } else {
+                    r.glyph.setText("–");
+                    r.glyph.setTextColor(Color.GRAY);
+                }
+                snttProgressBar.setProgress(index + 1);
+                snttProgressCount.setText((index + 1) + "/" + snttRows.size());
             }
 
             @Override
             public void onFinished(int saved, int failed, int skipped, String error) {
                 snttDownloading = false;
+                snttProgressClose.setVisibility(View.VISIBLE);
                 if (error != null) {
+                    snttProgressStatus.setTextColor(Color.rgb(248, 113, 113));
+                    snttProgressStatus.setText("ডাউনলোড ব্যর্থ: " + error);
                     toast("ডাউনলোড ব্যর্থ: " + error);
-                    snttPageStatus.setText("ডাউনলোড ব্যর্থ: " + error);
-                    snttPageStatus.setVisibility(View.VISIBLE);
                     return;
                 }
-                toast("ডাউনলোড সম্পন্ন: " + saved + "টি সংরক্ষিত, " + failed + "টি ব্যর্থ");
-                if (snttPageOpen) loadSnttHome();
+                snttProgressStatus.setTextColor(Color.rgb(74, 222, 128));
+                snttProgressStatus.setText("সম্পন্ন: " + saved + "টি সংরক্ষিত, " + failed + "টি ব্যর্থ, " + skipped + "টি বাদ");
+                toast("ডাউনলোড সম্পন্ন: " + saved + "টি সংরক্ষিত");
+                if (snttPageOpen && snttOnHome) loadSnttHome();
             }
         });
     }
