@@ -8,9 +8,8 @@ import android.os.Looper;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -43,14 +42,20 @@ final class SnttHome {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     interface Callback {
-        /** Called once the JSON list is read: file names only, in list order. */
+        /** The JSON list was read: file names only, in list order. */
         void onListReady(String[] names);
-        /** Called right before an item starts downloading. */
+        /** An item is about to download. */
         void onItemStart(int index, String name);
-        /** Called when an item finished: STATE_OK, STATE_FAILED or STATE_SKIPPED. */
-        void onItemDone(int index, int state);
-        /** Called at the end. error is non-null when the list itself could not be read. */
+        /** Bytes received so far for an item; total is -1 when the server does not say. */
+        void onItemProgress(int index, long read, long total);
+        /** An item finished: state is STATE_OK, STATE_FAILED or STATE_SKIPPED. */
+        void onItemDone(int index, int state, long bytes, String note);
+        /** All items processed. error is non-null when the list itself could not be read. */
         void onFinished(int saved, int failed, int skipped, String error);
+    }
+
+    interface ByteProgress {
+        void onBytes(long read, long total);
     }
 
     private SnttHome() {}
@@ -81,7 +86,7 @@ final class SnttHome {
         EXEC.execute(() -> {
             final List<String[]> items = new ArrayList<>();
             try {
-                String json = fetch(JSON_LIST_URL, 0);
+                String json = fetch(JSON_LIST_URL, 0, null);
                 if (json == null || json.trim().isEmpty()) throw new Exception("তালিকা খালি");
                 JSONArray arr = new JSONArray(json);
                 for (int i = 0; i < arr.length(); i++) {
@@ -111,15 +116,27 @@ final class SnttHome {
                 final String link = items.get(i)[1];
                 MAIN.post(() -> callback.onItemStart(index, name));
 
+                final long[] lastRead = {0};
+                final long[] lastPostAt = {0};
+                ByteProgress progress = (read, length) -> {
+                    lastRead[0] = read;
+                    long now = System.currentTimeMillis();
+                    if (read < length && now - lastPostAt[0] < 120) return;
+                    lastPostAt[0] = now;
+                    MAIN.post(() -> callback.onItemProgress(index, read, length));
+                };
+
                 int state;
+                String note = "";
                 if (link.isEmpty() || link.equalsIgnoreCase("none")) {
                     skip++;
                     state = STATE_SKIPPED;
+                    note = "ডাউনলোড লিংক নেই";
                 } else {
                     String clean = link.replaceAll("\\s+", "");
                     if (clean.startsWith("Https://")) clean = "https://" + clean.substring(8);
                     try {
-                        String content = fetch(clean, 0);
+                        String content = fetch(clean, 0, progress);
                         if (content != null && !content.isEmpty()) {
                             prefs.edit().putString(name, content).commit();
                             ok++;
@@ -127,15 +144,19 @@ final class SnttHome {
                         } else {
                             fail++;
                             state = STATE_FAILED;
+                            note = "ফাইল খালি";
                         }
                     } catch (Exception e) {
                         fail++;
                         state = STATE_FAILED;
+                        note = e.getMessage() != null ? e.getMessage() : "অজানা সমস্যা";
                     }
                 }
 
                 final int finalState = state;
-                MAIN.post(() -> callback.onItemDone(index, finalState));
+                final String finalNote = note;
+                final long bytes = lastRead[0];
+                MAIN.post(() -> callback.onItemDone(index, finalState, bytes, finalNote));
                 try {
                     Thread.sleep(150);
                 } catch (InterruptedException ignored) {}
@@ -150,7 +171,7 @@ final class SnttHome {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    private static String fetch(String urlString, int depth) throws Exception {
+    private static String fetch(String urlString, int depth, ByteProgress progress) throws Exception {
         if (depth > 5) throw new Exception("Too many redirects");
         HttpURLConnection conn = (HttpURLConnection) new URL(urlString).openConnection();
         try {
@@ -165,21 +186,25 @@ final class SnttHome {
                     || status == HttpURLConnection.HTTP_MOVED_PERM
                     || status == HttpURLConnection.HTTP_SEE_OTHER) {
                 String location = conn.getHeaderField("Location");
-                if (location != null) return fetch(location, depth + 1);
+                if (location != null) return fetch(location, depth + 1, progress);
             }
             if (status != HttpURLConnection.HTTP_OK) {
                 throw new Exception("HTTP " + status);
             }
 
-            StringBuilder sb = new StringBuilder();
-            try (InputStream in = conn.getInputStream();
-                 BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line).append('\n');
+            long length = conn.getContentLength();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            try (InputStream in = conn.getInputStream()) {
+                byte[] buffer = new byte[16384];
+                long read = 0;
+                int n;
+                while ((n = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, n);
+                    read += n;
+                    if (progress != null) progress.onBytes(read, length);
                 }
             }
-            return sb.toString();
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
         } finally {
             conn.disconnect();
         }
