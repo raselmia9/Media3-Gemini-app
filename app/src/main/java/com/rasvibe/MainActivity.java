@@ -2974,8 +2974,8 @@ public class MainActivity extends ComponentActivity {
     // Title bar at the top of the video
     private void buildPlayerTitle() {
         playerTitleView = new TextView(this);
-        playerTitleView.setTextColor(Color.WHITE);
-        playerTitleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        playerTitleView.setTextColor(Color.rgb(170, 170, 170));
+        playerTitleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
         playerTitleView.setTypeface(null, Typeface.BOLD);
         playerTitleView.setSingleLine(true);
         playerTitleView.setMaxLines(1);
