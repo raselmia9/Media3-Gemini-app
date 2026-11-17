@@ -58,7 +58,8 @@ public class RasFirebaseMessagingService extends FirebaseMessagingService {
         PendingIntent pi = PendingIntent.getActivity(c, 0, i,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         NotificationCompat.Builder b = new NotificationCompat.Builder(c, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_notification)
+                // ডাউনলোড notification-এর মতো একই RasVibe আইকন
+                .setSmallIcon(R.drawable.ic_stat_rasvibe_logo)
                 .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
