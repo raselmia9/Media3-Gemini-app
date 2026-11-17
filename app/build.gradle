@@ -1,6 +1,8 @@
+200 fd8bdec79e06689c178af050511323f9ab5e2045
 
 plugins {
     id 'com.android.application'
+    id 'com.google.gms.google-services'
 }
 
 // Every CI build gets a higher version code, so Android installs it as an update
@@ -74,5 +76,10 @@ dependencies {
     implementation "androidx.media3:media3-decoder-ffmpeg:$media3_version"
 
     implementation "androidx.media3:media3-database:$media3_version"
+
+    // Firebase Cloud Messaging (topic notifications)
+    implementation platform('com.google.firebase:firebase-bom:33.5.1')
+    implementation 'com.google.firebase:firebase-messaging'
     
 }
+
