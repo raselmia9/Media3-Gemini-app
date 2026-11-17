@@ -328,6 +328,13 @@ public class MainActivity extends ComponentActivity {
                 if (btnMiniPlayPause != null) {
                     btnMiniPlayPause.setText(player.isPlaying() ? "❚❚" : "▶");
                 }
+                if (player.isPlaying() && resumeKey != null) {
+                    long nowSave = System.currentTimeMillis();
+                    if (nowSave - lastResumeSaveAt >= 5000) {
+                        lastResumeSaveAt = nowSave;
+                        saveResumePosition();
+                    }
+                }
             }
             handler.postDelayed(this, 800);
         }
@@ -458,6 +465,8 @@ public class MainActivity extends ComponentActivity {
                             // Back while in miniplayer on Home -> close the miniplayer
                             closeMiniPlayer();
                         } else if (playerContainer != null && playerContainer.getVisibility() == View.VISIBLE) {
+                            saveResumePosition();
+                            hideErrorHud();
                             if (player != null) {
                                 player.stop();
                             }
@@ -1127,6 +1136,7 @@ public class MainActivity extends ComponentActivity {
 
     private void showGestureHud(String icon, String text, int progress) {
         if (gestureHudCard == null || isInPipMode()) return;
+        if (errorHudActive) return;
         gestureHudHandler.removeCallbacks(hideGestureHudRunnable);
         gestureHudIcon.setText(icon);
         gestureHudText.setText(text);
@@ -1660,6 +1670,7 @@ public class MainActivity extends ComponentActivity {
                         setStatus("Buffering...");
                     } else if (state == Player.STATE_READY) {
                         if (bufferingProgress != null) bufferingProgress.setVisibility(View.GONE);
+                        hideErrorHud();
                         setStatus("Playing / Ready");
                         updateDownloadAvailability();
                     } else if (state == Player.STATE_ENDED) {
@@ -1673,6 +1684,7 @@ public class MainActivity extends ComponentActivity {
 
                 @Override
                 public void onIsPlayingChanged(boolean isPlaying) {
+                    if (isPlaying) hideErrorHud();
                     updatePipParams();
                 }
 
@@ -1797,6 +1809,8 @@ public class MainActivity extends ComponentActivity {
     // ==========================================
 
     private void playStream() {
+        saveResumePosition();
+        hideErrorHud();
         updatePlayerTitle();
 
         String rawInput = value(urlInput);
@@ -1820,6 +1834,7 @@ public class MainActivity extends ComponentActivity {
 
         currentConfig = config;
         isOfflinePlayback = false;
+        resumeKey = (currentMovieTitle != null && !currentMovieTitle.trim().isEmpty()) ? config.url.trim() : null;
         canDownloadNow = false;
         applyDownloadButtonVisibility();
 
@@ -1894,9 +1909,14 @@ public class MainActivity extends ComponentActivity {
                 );
             }
 
+            long resumeFrom = getResumePositionFor(resumeKey);
             player.setMediaSource(
                     sourceFactory.createMediaSource(mediaItem)
             );
+            if (resumeFrom > 0) {
+                player.seekTo(resumeFrom);
+                toast("আগের জায়গা থেকে চলছে: " + formatTime(resumeFrom));
+            }
 
             player.prepare();
             player.play();
@@ -3047,16 +3067,62 @@ public class MainActivity extends ComponentActivity {
         playerTitleView.setTranslationY(offset);
     }
 
-    // Centre card that stays a bit longer, used for a link that cannot play
+    // Centre card for a link that cannot play. It stays visible until a new link is loaded or playback starts.
+    private boolean errorHudActive = false;
+
     private void showErrorHud(String text) {
         if (gestureHudCard == null || isInPipMode()) return;
+        errorHudActive = true;
         gestureHudHandler.removeCallbacks(hideGestureHudRunnable);
+        gestureHudCard.animate().cancel();
         gestureHudIcon.setText("⚠️");
         gestureHudText.setText(text);
         gestureHudProgress.setVisibility(View.GONE);
         gestureHudCard.setAlpha(1f);
         gestureHudCard.setVisibility(View.VISIBLE);
-        gestureHudHandler.postDelayed(hideGestureHudRunnable, 4000);
+    }
+
+    private void hideErrorHud() {
+        if (!errorHudActive) return;
+        errorHudActive = false;
+        if (gestureHudCard == null) return;
+        gestureHudHandler.removeCallbacks(hideGestureHudRunnable);
+        gestureHudCard.animate().cancel();
+        gestureHudCard.setAlpha(1f);
+        gestureHudCard.setVisibility(View.GONE);
+    }
+
+    // ===== Resume position for movie & series links =====
+    private static final String RESUME_PREFS = "resume_positions";
+    // Link of the movie/series that is playing now (null = nothing to resume)
+    private String resumeKey = null;
+    private long lastResumeSaveAt = 0;
+
+    private long getResumePositionFor(String key) {
+        if (key == null || key.isEmpty()) return 0;
+        return getSharedPreferences(RESUME_PREFS, MODE_PRIVATE).getLong("pos_" + key, 0L);
+    }
+
+    // Saves where the current movie/series stopped, so the next play starts from the same place
+    private void saveResumePosition() {
+        if (resumeKey == null || player == null || isOfflinePlayback) return;
+        try {
+            if (player.isCurrentMediaItemLive()) return;
+            long pos = Math.max(0, player.getCurrentPosition());
+            long dur = player.getDuration();
+            if (dur <= 0) return; // duration unknown: nothing reliable to save
+            String prefKey = "pos_" + resumeKey;
+            android.content.SharedPreferences.Editor ed = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE).edit();
+            if (pos >= dur - 15000) {
+                ed.remove(prefKey); // finished: start from the beginning next time
+            } else if (pos > 5000) {
+                ed.putLong(prefKey, pos);
+            } else {
+                return;
+            }
+            ed.apply();
+        } catch (Exception ignored) {
+        }
     }
 
     private void openSideMenu() {
@@ -3414,6 +3480,8 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void closeMiniPlayer() {
+        saveResumePosition();
+        hideErrorHud();
         if (player != null) {
             player.stop();
         }
@@ -3756,6 +3824,7 @@ public class MainActivity extends ComponentActivity {
         String clean = raw.trim();
         metaVideoUrl = "";
         pageOverlayTitle = "";
+        hideErrorHud();
 
         // Check if Movie UI JSON metadata was emitted
         if (clean.startsWith("{") && clean.endsWith("}")) {
@@ -4967,6 +5036,9 @@ public class MainActivity extends ComponentActivity {
 
     private void playOfflineDownload(Download d) {
         if (player == null) return;
+        saveResumePosition();
+        resumeKey = null;
+        hideErrorHud();
         // The Downloads page stays open; only the player is shown above it
 
         if (isMiniPlayerActive) {
@@ -5814,6 +5886,7 @@ public class MainActivity extends ComponentActivity {
     protected void onStop() {
         super.onStop();
         unregisterSnttNetworkWatch();
+        saveResumePosition();
         if (player != null && !isInPipMode()) {
             player.pause();
         }
@@ -6061,6 +6134,7 @@ public class MainActivity extends ComponentActivity {
             eventWebView = null;
         }
 
+        saveResumePosition();
         if (player != null) {
             playerView.setPlayer(null);
             player.release();
