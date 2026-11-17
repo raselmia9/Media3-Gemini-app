@@ -4,6 +4,7 @@ import android.content.Context;
 import org.json.JSONException;
 import org.json.JSONObject;
 import android.content.Intent;
+import androidx.annotation.NonNull;
 import android.graphics.Typeface;
 import android.graphics.Outline;
 import android.view.ViewOutlineProvider;
@@ -5853,6 +5854,34 @@ public class MainActivity extends ComponentActivity {
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 4421);
+        } else {
+            requestBatteryExemptionIfNeeded();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 4421) {
+            // After the notification prompt, ask once for battery-optimization exemption
+            requestBatteryExemptionIfNeeded();
+        }
+    }
+
+    // Ask once on launch so the app can receive notifications while it is closed
+    private void requestBatteryExemptionIfNeeded() {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+            android.content.SharedPreferences prefs = getSharedPreferences("launch_prefs", MODE_PRIVATE);
+            if (prefs.getBoolean("battery_asked", false)) return;
+            prefs.edit().putBoolean("battery_asked", true).apply();
+            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Exception e) {
+            android.util.Log.d("RasVibe", "battery exemption request failed: " + e.getMessage());
         }
     }
 
