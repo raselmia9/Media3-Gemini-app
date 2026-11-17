@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "73466582893",
+    "project_id": "rasvibe-76ab2",
+    "storage_bucket": "rasvibe-76ab2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:73466582893:android:38b81629a2fd92e13aec64",
+        "android_client_info": {
+          "package_name": "com.rasvibe"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAq1hrc0dBm2gvtwLsDtqAr4WbtUFBLA6o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
