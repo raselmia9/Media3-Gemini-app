@@ -3,6 +3,9 @@ package com.rasvibe;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
+import android.net.Uri;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
@@ -12,7 +15,7 @@ import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
 
 public class RasFirebaseMessagingService extends FirebaseMessagingService {
-    public static final String CHANNEL_ID = "announcements";
+    public static final String CHANNEL_ID = "announcements_v2";
 
     @Override
     public void onMessageReceived(RemoteMessage msg) {
@@ -36,6 +39,14 @@ public class RasFirebaseMessagingService extends FirebaseMessagingService {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel ch = new NotificationChannel(
                     CHANNEL_ID, "Announcements", NotificationManager.IMPORTANCE_HIGH);
+            // Default system notification sound + vibration
+            Uri sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            ch.setSound(sound, attrs);
+            ch.enableVibration(true);
             c.getSystemService(NotificationManager.class).createNotificationChannel(ch);
         }
     }
@@ -52,6 +63,7 @@ public class RasFirebaseMessagingService extends FirebaseMessagingService {
                 .setContentText(body)
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(NotificationCompat.DEFAULT_SOUND | NotificationCompat.DEFAULT_VIBRATE)
                 .setAutoCancel(true)
                 .setContentIntent(pi);
         try {
