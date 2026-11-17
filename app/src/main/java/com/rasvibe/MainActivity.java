@@ -1,3 +1,4 @@
+200 9b922f825ff4843f978007f9c30ee9374ebdc5e4
 package com.rasvibe;
 
 import android.content.Context;
@@ -84,6 +85,7 @@ import androidx.media3.exoplayer.offline.Download;
 import androidx.media3.exoplayer.offline.DownloadManager;
 import androidx.media3.exoplayer.offline.DownloadService;
 import android.content.pm.PackageManager;
+import com.google.firebase.messaging.FirebaseMessaging;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -857,6 +859,7 @@ public class MainActivity extends ComponentActivity {
         buildSplashScreen(mainAppContainer);
 
         setContentView(mainAppContainer);
+        setupAnnouncements();
 
         // Pad the content away from system bars and cutouts in normal mode;
         // in fullscreen the player gets the whole screen, edge to edge.
@@ -6141,4 +6144,14 @@ public class MainActivity extends ComponentActivity {
             player = null;
         }
     }
+
+    // Topic notifications: announcements sent from the Firebase console or admin app
+    private void setupAnnouncements() {
+        RasFirebaseMessagingService.createChannel(this);
+        requestNotificationPermissionIfNeeded();
+        FirebaseMessaging.getInstance().subscribeToTopic("announcements")
+                .addOnCompleteListener(t -> android.util.Log.d("RasVibe",
+                        "announcements subscribe: " + t.isSuccessful()));
+    }
 }
+
